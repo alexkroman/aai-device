@@ -19,7 +19,12 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
             __builtin_trap();  // resampler_init would divide by zero / misbehave
         }
         char url[128];
-        proto_session_url("ws://host:3000/websocket", msg.session_id, url, sizeof(url));
+        proto_session_url("ws://host:3000/websocket", msg.session_id, NULL, url, sizeof(url));
+        // Server-chosen bytes as the location too: exercises the encoder's bounds.
+        if (proto_session_url("ws://host:3000/websocket", NULL, msg.session_id, url, sizeof(url)) &&
+            strlen(url) >= sizeof(url)) {
+            __builtin_trap();
+        }
     }
     return 0;
 }

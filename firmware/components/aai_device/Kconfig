@@ -14,6 +14,14 @@ menu "AAI Voice Device"
         help
             The /websocket endpoint of the voice agent, e.g. `aai dev` on your computer.
 
+    config AAI_DEVICE_ADDRESS
+        string "Device street address"
+        default ""
+        help
+            Where the speaker is, e.g. "123 Example St, Portland, OR 97201". Sent to the
+            agent as ?location= on connect so "coffee near me" and "what's the weather" mean
+            here. Separate street, town and region with commas. Empty sends nothing.
+
     config AAI_FOLLOWUP_MS
         int "Follow-up window (ms)"
         default 8000

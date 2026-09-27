@@ -36,8 +36,9 @@ typedef struct {
 bool proto_parse(const char *json, size_t len, proto_msg_t *out);
 
 // Build the session URL. Resumes `session_id` when non-empty, otherwise opens a
-// fresh session with the spoken greeting suppressed. Returns false on overflow.
-bool proto_session_url(const char *base, const char *session_id, char *out, size_t out_len);
+// fresh session with the spoken greeting suppressed. A non-empty `location` is
+// appended URL-encoded as `location=`. Returns false on overflow.
+bool proto_session_url(const char *base, const char *session_id, const char *location, char *out, size_t out_len);
 
 // Reassembles PCM16LE samples from binary frames that may split a sample.
 typedef struct {

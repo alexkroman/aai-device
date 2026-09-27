@@ -22,6 +22,11 @@ export default agent({
   // spelled out — and either one replaces only the speaking stage.
   voice: "jane",
   // Host-side tools, enabled by name. Setting this REPLACES the default
-  // (`["think"]`), so `think` is listed to keep it. `open_meteo` is keyless.
-  builtinTools: ["think", "open_meteo"],
+  // (`["think"]`), so `think` is listed to keep it. `open_meteo` is keyless;
+  // the other two read their keys from `.env`. The device's `?location=`
+  // (CONFIG_AAI_DEVICE_ADDRESS) is what "near me" and "the weather" default to.
+  builtinTools: ["think", "open_meteo", "brave_search", "google_places"],
+  // Declared so a deploy refuses to start without them rather than the tools
+  // apologizing on every call.
+  requiredEnv: ["BRAVE_API_KEY", "GOOGLE_PLACES_API_KEY"],
 });

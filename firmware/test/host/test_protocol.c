@@ -143,30 +143,50 @@ static void test_parse_respects_length(void)
 static void test_url_fresh_session(void)
 {
     char url[128];
-    TEST_ASSERT_TRUE(proto_session_url("ws://10.0.0.2:3000/websocket", NULL, url, sizeof(url)));
+    TEST_ASSERT_TRUE(proto_session_url("ws://10.0.0.2:3000/websocket", NULL, NULL, url, sizeof(url)));
     TEST_ASSERT_EQUAL_STRING("ws://10.0.0.2:3000/websocket?resume=1", url);
-    TEST_ASSERT_TRUE(proto_session_url("ws://10.0.0.2:3000/websocket", "", url, sizeof(url)));
+    TEST_ASSERT_TRUE(proto_session_url("ws://10.0.0.2:3000/websocket", "", NULL, url, sizeof(url)));
     TEST_ASSERT_EQUAL_STRING("ws://10.0.0.2:3000/websocket?resume=1", url);
 }
 
 static void test_url_resume(void)
 {
     char url[128];
-    TEST_ASSERT_TRUE(proto_session_url("ws://h/websocket", "sess_1", url, sizeof(url)));
+    TEST_ASSERT_TRUE(proto_session_url("ws://h/websocket", "sess_1", NULL, url, sizeof(url)));
     TEST_ASSERT_EQUAL_STRING("ws://h/websocket?sessionId=sess_1", url);
 }
 
 static void test_url_existing_query(void)
 {
     char url[128];
-    TEST_ASSERT_TRUE(proto_session_url("wss://h/websocket?token=abc", NULL, url, sizeof(url)));
+    TEST_ASSERT_TRUE(proto_session_url("wss://h/websocket?token=abc", NULL, NULL, url, sizeof(url)));
     TEST_ASSERT_EQUAL_STRING("wss://h/websocket?token=abc&resume=1", url);
 }
 
 static void test_url_overflow(void)
 {
     char url[16];
-    TEST_ASSERT_FALSE(proto_session_url("ws://a-long-host-name/websocket", NULL, url, sizeof(url)));
+    TEST_ASSERT_FALSE(proto_session_url("ws://a-long-host-name/websocket", NULL, NULL, url, sizeof(url)));
+}
+
+static void test_url_location_encoded(void)
+{
+    char url[160];
+    TEST_ASSERT_TRUE(
+        proto_session_url("ws://h/websocket", NULL, "123 Example St, Portland, OR 97201", url, sizeof(url)));
+    TEST_ASSERT_EQUAL_STRING("ws://h/websocket?resume=1&location=123%20Example%20St%2C%20Portland%2C%20OR%2097201",
+                             url);
+    TEST_ASSERT_TRUE(proto_session_url("ws://h/websocket", "sess_1", "a&b=c", url, sizeof(url)));
+    TEST_ASSERT_EQUAL_STRING("ws://h/websocket?sessionId=sess_1&location=a%26b%3Dc", url);
+    TEST_ASSERT_TRUE(proto_session_url("ws://h/websocket", NULL, "", url, sizeof(url)));
+    TEST_ASSERT_EQUAL_STRING("ws://h/websocket?resume=1", url);
+}
+
+static void test_url_location_overflow(void)
+{
+    // Room for the base and the key but not an encoded character: refuse, never truncate.
+    char url[37];
+    TEST_ASSERT_FALSE(proto_session_url("ws://h/websocket", NULL, "a b", url, sizeof(url)));
 }
 
 // ---- pcm_align --------------------------------------------------------------
@@ -226,6 +246,8 @@ int main(void)
     RUN_TEST(test_url_resume);
     RUN_TEST(test_url_existing_query);
     RUN_TEST(test_url_overflow);
+    RUN_TEST(test_url_location_encoded);
+    RUN_TEST(test_url_location_overflow);
     RUN_TEST(test_align_even_frames);
     RUN_TEST(test_align_sample_split_across_frames);
     RUN_TEST(test_align_empty_frame_keeps_carry);

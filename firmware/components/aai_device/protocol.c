@@ -1,5 +1,6 @@
 #include "protocol.h"
 
+#include <ctype.h>
 #include <stdio.h>
 #include <string.h>
 #include "cJSON.h"
@@ -58,12 +59,41 @@ bool proto_parse(const char *json, size_t len, proto_msg_t *out)
     return true;
 }
 
-bool proto_session_url(const char *base, const char *session_id, char *out, size_t out_len)
+bool proto_session_url(const char *base, const char *session_id, const char *location, char *out, size_t out_len)
 {
     const char *sep = strchr(base, '?') ? "&" : "?";
     int n = session_id && session_id[0] ? snprintf(out, out_len, "%s%ssessionId=%s", base, sep, session_id)
                                         : snprintf(out, out_len, "%s%sresume=1", base, sep);
-    return n > 0 && (size_t)n < out_len;
+    if (n <= 0 || (size_t)n >= out_len) {
+        return false;
+    }
+    if (!location || !location[0]) {
+        return true;
+    }
+    size_t len = (size_t)n;
+    static const char key[] = "&location=";
+    if (len + sizeof(key) > out_len) {
+        return false;
+    }
+    memcpy(out + len, key, sizeof(key));  // includes the NUL
+    len += sizeof(key) - 1;
+    static const char hex[] = "0123456789ABCDEF";
+    for (const unsigned char *c = (const unsigned char *)location; *c; c++) {
+        bool plain = isalnum(*c) || *c == '-' || *c == '.' || *c == '_' || *c == '~';
+        size_t need = plain ? 1 : 3;
+        if (len + need >= out_len) {
+            return false;
+        }
+        if (plain) {
+            out[len++] = (char)*c;
+        } else {
+            out[len++] = '%';
+            out[len++] = hex[*c >> 4];
+            out[len++] = hex[*c & 0xF];
+        }
+    }
+    out[len] = '\0';
+    return true;
 }
 
 size_t pcm_align(pcm_aligner_t *a, const uint8_t *data, size_t len, int16_t *out)

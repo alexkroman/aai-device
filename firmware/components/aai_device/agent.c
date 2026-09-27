@@ -309,14 +309,20 @@ void agent_init(void)
 
 void agent_start(void)
 {
-    char uri[256];
+    char uri[512];
     bool resume = s_session_id[0] && s_session_has_turns && now_us() - s_session_end_us < RESUME_WINDOW_US;
     if (!resume) {
         s_session_has_turns = false;
     }
-    proto_session_url(CONFIG_AAI_AGENT_URL, resume ? s_session_id : NULL, uri, sizeof(uri));
-    ESP_LOGI(TAG, "connecting to %s (internal heap free %u, largest block %u)", uri,
-             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+    const char *sid = resume ? s_session_id : NULL;
+    // An address too long for the buffer costs only "near me", never the connection.
+    if (!proto_session_url(CONFIG_AAI_AGENT_URL, sid, CONFIG_AAI_DEVICE_ADDRESS, uri, sizeof(uri))) {
+        ESP_LOGW(TAG, "device address too long for the session URL; connecting without it");
+        proto_session_url(CONFIG_AAI_AGENT_URL, sid, NULL, uri, sizeof(uri));
+    }
+    // Not `uri`: it carries the device's street address.
+    ESP_LOGI(TAG, "connecting to %s%s (internal heap free %u, largest block %u)", CONFIG_AAI_AGENT_URL,
+             resume ? " (resume)" : "", (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
              (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
 
     s_configured = false;
