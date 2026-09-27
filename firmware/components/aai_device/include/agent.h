@@ -23,6 +23,7 @@ void agent_cancel(void);
 
 // Queue a short local beep (used as the wake chime).
 void agent_play_tone(int freq_hz, int ms);
+void agent_play_chime(void);  // the wake cue
 
 bool agent_speaker_busy(void);
 

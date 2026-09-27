@@ -48,11 +48,14 @@ static void end_session(void)
 
 static void on_wake(void)
 {
-    agent_play_tone(880, 120);
     if (s_state != STATE_IDLE) {
-        agent_cancel();  // wake word mid-reply = "stop talking"
+        // Wake word mid-reply = "stop talking". Cancel before the chime: queued first, the
+        // chime waited behind the buffered reply (blocking this loop) and was then flushed.
+        agent_cancel();
+        agent_play_chime();
         return;
     }
+    agent_play_chime();
     if (!wifi_is_connected()) {
         ESP_LOGW(TAG, "no wifi");
         leds_set(LEDS_ERROR);

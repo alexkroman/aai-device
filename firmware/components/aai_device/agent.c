@@ -33,6 +33,10 @@ static const char *TAG = "agent";
 #define RESUME_WINDOW_US   (110LL * 1000 * 1000)  // server keeps sessions 120 s
 #define PROGRESS_EVERY_US  (500 * 1000)
 #define AMP_IDLE_OFF_US    (1000 * 1000)
+// The amp is switched on over I2C the moment audio arrives, and takes a moment to come up:
+// without a lead-in the 120 ms wake chime played into an amp that wasn't on yet and was
+// never heard. Silence rather than a delay keeps the I2S stream continuous.
+#define AMP_WARMUP_MS 150
 
 static esp_websocket_client_handle_t s_ws;
 static StreamBufferHandle_t s_mic_sb, s_spk_sb;
@@ -40,6 +44,11 @@ static StreamBufferHandle_t s_mic_sb, s_spk_sb;
 static atomic_bool s_active;      // session open (mic audio accepted)
 static atomic_bool s_configured;  // session.configured received
 static atomic_bool s_flush;       // player should drop buffered audio
+// We sent `cancel` and the server's `reply.cancelled` hasn't arrived: audio frames in
+// between are the interrupted reply's tail, already on the wire, and are dropped. The
+// server answers every cancel with reply.cancelled (in order, on this socket), so this
+// always clears; agent_start() resets it too.
+static atomic_bool s_discard;
 static atomic_int_fast64_t s_last_activity_us, s_last_play_us;
 static int s_in_rate = BOARD_SAMPLE_RATE, s_tts_rate = 24000;
 
@@ -73,6 +82,9 @@ static void on_audio(const uint8_t *data, size_t len)
     EXT_RAM_BSS_ATTR static int16_t out[WS_BUFFER_SIZE];
     static pcm_aligner_t aligner;
 
+    if (s_discard) {
+        return;
+    }
     size_t n = pcm_align(&aligner, data, len, in);
     // Slice so the output fits `out` at any negotiated rate (e.g. 8 kHz TTS upsamples 2x).
     size_t slice = resampler_max_in(&s_tts_rs, sizeof(out) / sizeof(out[0]));
@@ -116,7 +128,13 @@ static void on_event(const char *json, size_t len)
     case PROTO_SESSION_RESET:
         // Barge-in. Note: speech.started is NOT an interruption signal; only this is.
         ESP_LOGI(TAG, "%s: flushing playback", msg.type == PROTO_REPLY_CANCELLED ? "reply.cancelled" : "session.reset");
-        s_flush = true;
+        if (s_discard) {
+            // Our own cancel: playback was flushed when it was sent and the tail since has
+            // been dropped, so a second flush would only cut off the wake chime.
+            s_discard = false;
+        } else {
+            s_flush = true;
+        }
         break;
     case PROTO_USER_TRANSCRIPT:
         s_session_has_turns = true;
@@ -233,6 +251,7 @@ static void player_task(void *arg)
     EXT_RAM_BSS_ATTR static int16_t buf[256];
     int64_t burst_start = 0;  // 0 = idle
     size_t burst_samples = 0;
+    bool amp_on = false;
     unsigned underruns = 0;  // buffer ran dry mid-burst (audible gap)
     int64_t max_gap_us = 0;
     for (;;) {
@@ -260,7 +279,14 @@ static void player_task(void *arg)
                 max_gap_us = gap > max_gap_us ? gap : max_gap_us;
             }
             burst_samples += got;
-            board_speaker_enable(true);  // amp only on while there is audio to play
+            if (!amp_on) {  // amp only on while there is audio to play
+                static const int16_t k_silence[256];
+                board_speaker_enable(true);
+                amp_on = true;
+                for (int left = BOARD_SAMPLE_RATE * AMP_WARMUP_MS / 1000; left > 0; left -= 256) {
+                    board_speaker_write(k_silence, left < 256 ? left : 256);
+                }
+            }
             board_speaker_write(buf, got);
             s_last_play_us = now_us();
         } else {
@@ -271,8 +297,9 @@ static void player_task(void *arg)
                 s_convert_max_us = 0;
                 burst_start = 0;
             }
-            if (now_us() - s_last_play_us > AMP_IDLE_OFF_US) {
+            if (amp_on && now_us() - s_last_play_us > AMP_IDLE_OFF_US) {
                 board_speaker_enable(false);
+                amp_on = false;
             }
         }
     }
@@ -332,6 +359,7 @@ void agent_start(void)
              (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
 
     s_configured = false;
+    s_discard = false;
     s_active = true;
     touch();
     esp_websocket_client_set_uri(s_ws, uri);
@@ -368,13 +396,46 @@ void agent_push_mic(const int16_t *pcm, size_t samples)
 
 void agent_cancel(void)
 {
+    s_discard = true;
     s_flush = true;
     ESP_LOGI(TAG, "cancel requested");
     send_json("{\"type\":\"cancel\"}");
 }
 
+// After agent_cancel() the player flushes on its next pass (<= 20 ms): wait for it, or the
+// flush takes the cue with it.
+static void wait_for_flush(void)
+{
+    for (int i = 0; s_flush && i < 20; i++) {
+        vTaskDelay(pdMS_TO_TICKS(5));
+    }
+}
+
+// Blurt's rom1a-6 start cue, embedded by CMakeLists.txt (EMBED_FILES), already at
+// BOARD_SAMPLE_RATE. It peaks near full scale; the gain brings it to about the level of
+// the old 880 Hz beep (peak 6000) so the wake cue isn't a jump in loudness.
+extern const uint8_t k_chime_start[] asm("_binary_wake_chime_pcm_start");
+extern const uint8_t k_chime_end[] asm("_binary_wake_chime_pcm_end");
+#define CHIME_GAIN_Q15 11000  // ~0.34
+
+void agent_play_chime(void)
+{
+    wait_for_flush();
+    const int16_t *pcm = (const int16_t *)k_chime_start;
+    size_t n = (size_t)(k_chime_end - k_chime_start) / sizeof(int16_t);
+    int16_t buf[160];
+    for (size_t i = 0; i < n; i += 160) {
+        size_t chunk = n - i < 160 ? n - i : 160;
+        for (size_t j = 0; j < chunk; j++) {
+            buf[j] = (int16_t)((pcm[i + j] * CHIME_GAIN_Q15) >> 15);
+        }
+        xStreamBufferSend(s_spk_sb, buf, chunk * 2, pdMS_TO_TICKS(100));
+    }
+}
+
 void agent_play_tone(int freq_hz, int ms)
 {
+    wait_for_flush();
     int n = BOARD_SAMPLE_RATE * ms / 1000;
     int16_t buf[160];
     for (int i = 0; i < n; i += 160) {
