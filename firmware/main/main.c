@@ -25,6 +25,9 @@ typedef enum { STATE_IDLE, STATE_CONNECTING, STATE_ACTIVE } app_state_t;
 // Only touched from the aai_events task, so no locking.
 static app_state_t s_state = STATE_IDLE;
 static int64_t s_state_since;
+// The user's turn is committed and the agent hasn't finished its reply. Spans tool
+// calls: hold lines ("one moment...") play mid-turn, then it's back to waiting.
+static bool s_thinking;
 
 static int64_t now_ms(void) { return esp_timer_get_time() / 1000; }
 
@@ -36,6 +39,7 @@ static void enter(app_state_t state)
 
 static void end_session(void)
 {
+    s_thinking = false;
     voice_set_streaming(false);
     agent_stop();
     leds_set(s_state == STATE_ACTIVE ? LEDS_OFF : LEDS_ERROR);
@@ -67,10 +71,30 @@ static void on_tick(void)
         end_session();
     } else if (s_state == STATE_ACTIVE) {
         bool speaking = agent_speaker_busy();
-        leds_set(speaking ? LEDS_SPEAKING : LEDS_LISTENING);
+        leds_set(speaking ? LEDS_SPEAKING : s_thinking ? LEDS_THINKING : LEDS_LISTENING);
         if (!speaking && now_ms() - agent_last_activity_ms() > CONFIG_AAI_FOLLOWUP_MS) {
             end_session();
         }
+    }
+}
+
+static void on_message(const proto_msg_t *msg)
+{
+    switch (msg->type) {
+    case PROTO_USER_TRANSCRIPT:
+        s_thinking = true;
+        if (s_state == STATE_ACTIVE && !agent_speaker_busy()) {
+            leds_set(LEDS_THINKING);  // don't wait for the next tick
+        }
+        break;
+    case PROTO_AGENT_TRANSCRIPT:  // final reply text is in; its audio shows as speaking
+    case PROTO_REPLY_CANCELLED:
+    case PROTO_SESSION_RESET:
+    case PROTO_ERROR:
+        s_thinking = false;
+        break;
+    default:
+        break;
     }
 }
 
@@ -94,16 +118,19 @@ static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data)
         on_tick();
         break;
     case AAI_EVENT_MESSAGE:
+        on_message(data);
         break;
     }
 }
 
 void app_main(void)
 {
+    // First, so the ring spins through everything below (codec, Wi-Fi, wake word model)
+    // until the device can actually hear the wake word.
+    leds_init();
+    leds_set(LEDS_BOOTING);
     ESP_ERROR_CHECK(board_init());
     board_speaker_set_volume(CONFIG_AAI_VOLUME);
-    leds_init();
-    leds_set(LEDS_CONNECTING);
     wifi_start();
     wifi_wait_connected(-1);
     agent_init();
