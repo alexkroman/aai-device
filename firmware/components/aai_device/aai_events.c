@@ -1,24 +1,33 @@
 #include "aai_events.h"
 
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/idf_additions.h"
 
 ESP_EVENT_DEFINE_BASE(AAI_EVENT);
 
 static const char *TAG = "aai_events";
 static esp_event_loop_handle_t s_loop;
 
+static void loop_task(void *arg)
+{
+    for (;;) {
+        esp_event_loop_run(s_loop, portMAX_DELAY);
+    }
+}
+
 esp_event_loop_handle_t aai_events_loop(void)
 {
     if (!s_loop) {
-        esp_event_loop_args_t args = {
-            .queue_size = 16,
-            .task_name = "aai_events",
-            .task_priority = 5,
-            .task_stack_size = 6144,
-            .task_core_id = tskNO_AFFINITY,
-        };
+        // No built-in task: esp_event would put its stack in scarce internal RAM, which the
+        // websocket client (internal-only stack) needs. Run the loop on a PSRAM-stack task
+        // instead; handlers never write flash, so a PSRAM stack is safe.
+        esp_event_loop_args_t args = {.queue_size = 16, .task_name = NULL};
         ESP_ERROR_CHECK(esp_event_loop_create(&args, &s_loop));
+        xTaskCreatePinnedToCoreWithCaps(loop_task, "aai_events", 6144, NULL, 5, NULL, tskNO_AFFINITY,
+                                        MALLOC_CAP_SPIRAM);
     }
     return s_loop;
 }

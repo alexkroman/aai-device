@@ -6,6 +6,7 @@
 #include <string.h>
 #include "aai_events.h"
 #include "board.h"
+#include "esp_attr.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -61,8 +62,10 @@ static void send_json(const char *json)
 
 static void on_audio(const uint8_t *data, size_t len)
 {
-    static int16_t in[WS_BUFFER_SIZE / 2 + 1];
-    static int16_t out[WS_BUFFER_SIZE];
+    // Large buffers live in PSRAM (EXT_RAM_BSS_ATTR): internal RAM is reserved for Wi-Fi/lwIP
+    // and the websocket task stack. All are CPU-copied, never DMA'd or used with cache off.
+    EXT_RAM_BSS_ATTR static int16_t in[WS_BUFFER_SIZE / 2 + 1];
+    EXT_RAM_BSS_ATTR static int16_t out[WS_BUFFER_SIZE];
     static pcm_aligner_t aligner;
 
     size_t n = pcm_align(&aligner, data, len, in);
@@ -82,7 +85,7 @@ static void on_audio(const uint8_t *data, size_t len)
 
 static void on_event(const char *json, size_t len)
 {
-    static proto_msg_t msg;  // ~650 bytes; keep it off the websocket task stack
+    EXT_RAM_BSS_ATTR static proto_msg_t msg;  // ~650 bytes; keep it off the websocket task stack
     if (!proto_parse(json, len, &msg)) {
         return;
     }
@@ -139,7 +142,7 @@ static void on_event(const char *json, size_t len)
 static void ws_handler(void *arg, esp_event_base_t base, int32_t id, void *event_data)
 {
     esp_websocket_event_data_t *ev = event_data;
-    static char text[TEXT_MAX];
+    EXT_RAM_BSS_ATTR static char text[TEXT_MAX];
     static uint8_t frame_op;
 
     switch (id) {
@@ -180,8 +183,8 @@ static void ws_handler(void *arg, esp_event_base_t base, int32_t id, void *event
 
 static void sender_task(void *arg)
 {
-    static int16_t in[SEND_CHUNK];
-    static int16_t out[SEND_CHUNK * 2 + 4];
+    EXT_RAM_BSS_ATTR static int16_t in[SEND_CHUNK];
+    EXT_RAM_BSS_ATTR static int16_t out[SEND_CHUNK * 2 + 4];
     resampler_t rs;  // board rate -> agent input rate; owned by this task
     bool was_configured = false;
     int64_t last_progress = 0;
@@ -221,7 +224,7 @@ static void sender_task(void *arg)
 
 static void player_task(void *arg)
 {
-    static int16_t buf[256];
+    EXT_RAM_BSS_ATTR static int16_t buf[256];
     int64_t burst_start = 0;  // 0 = idle
     size_t burst_samples = 0;
     unsigned underruns = 0;  // buffer ran dry mid-burst (audible gap)
@@ -299,6 +302,9 @@ void agent_init(void)
     };
     s_ws = esp_websocket_client_init(&cfg);
     esp_websocket_register_events(s_ws, WEBSOCKET_EVENT_ANY, ws_handler, NULL);
+    // Its per-session INFO lines are noise, and stop() on an already-stopped client
+    // warns "Client was not started" by design (see agent_stop). Errors still show.
+    esp_log_level_set("websocket_client", ESP_LOG_ERROR);
 }
 
 void agent_start(void)
@@ -332,10 +338,12 @@ void agent_stop(void)
     s_configured = false;
     s_session_end_us = now_us();
     if (esp_websocket_client_is_connected(s_ws)) {
-        esp_websocket_client_close(s_ws, pdMS_TO_TICKS(1000));
-    } else {
-        esp_websocket_client_stop(s_ws);  // server already hung up; just end the task
+        esp_websocket_client_close(s_ws, pdMS_TO_TICKS(1000));  // polite close frame
     }
+    // close() returns early without waiting if the server hung up first (and after its
+    // timeout); stop() is the only call that waits for the client task to exit, so the
+    // next agent_start() can't find it still running. No-op when already stopped.
+    esp_websocket_client_stop(s_ws);
     ESP_LOGI(TAG, "session ended");
 }
 

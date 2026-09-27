@@ -60,7 +60,7 @@ TEST_CASE("connects and receives session.configured", "[agent]")
 TEST_CASE("wake word to spoken answer, with a tool call", "[agent]")
 {
     // The whole device flow: "Computer" wakes it, the question is streamed through the
-    // AFE, the agent calls get_weather, and its spoken reply reaches the speaker.
+    // AFE, the agent calls a weather tool, and its spoken reply reaches the speaker.
     setup();
     test_play_clip(clip_wake_weather());
     TEST_ASSERT_TRUE_MESSAGE(test_wait_for(is_woken, 5000), "wake word not detected");
@@ -74,8 +74,10 @@ TEST_CASE("wake word to spoken answer, with a tool call", "[agent]")
     TEST_ASSERT_TRUE_MESSAGE(replied, "no agent reply");
     TEST_ASSERT_TRUE_MESSAGE(contains_ci(g_obs.user_text, "weather"), g_obs.user_text);
     TEST_ASSERT_TRUE_MESSAGE(contains_ci(g_obs.user_text, "denver"), g_obs.user_text);
-    TEST_ASSERT_TRUE(g_obs.tool_called);
-    TEST_ASSERT_EQUAL_STRING("get_weather", g_obs.tool);
+    // Which weather tool the agent uses is the agent's business (get_weather,
+    // open_meteo, ...); the device only has to relay the tool.called event.
+    TEST_ASSERT_TRUE_MESSAGE(g_obs.tool_called, "no tool.called event reached the device");
+    TEST_ASSERT_NOT_EQUAL(0, strlen(g_obs.tool));
     TEST_ASSERT_TRUE_MESSAGE(g_obs.speaker_heard, "reply audio never reached the speaker");
 }
 

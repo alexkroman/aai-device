@@ -8,6 +8,7 @@
 #include <stdbool.h>
 #include "driver/i2c_master.h"
 #include "driver/i2s_std.h"
+#include "esp_attr.h"
 #include "esp_check.h"
 #include "esp_codec_dev.h"
 #include "esp_codec_dev_defaults.h"
@@ -136,7 +137,7 @@ esp_err_t board_mic_read(int16_t *buf, size_t frames)
 esp_err_t board_speaker_write(const int16_t *pcm, size_t samples)
 {
     // Expand mono PCM16 to the bus format: stereo, 32-bit left-justified.
-    static int32_t out[256 * 2];
+    EXT_RAM_BSS_ATTR static int32_t out[256 * 2];  // CPU-copied into DMA by the I2S driver
     while (samples > 0) {
         size_t n = samples < 256 ? samples : 256;
         for (size_t i = 0; i < n; i++) {

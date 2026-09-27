@@ -10,7 +10,8 @@ import json
 import sys
 from pathlib import Path
 
-DIRAM_BUDGET = 0.70  # static data+bss+iram in internal RAM (was 63% on 2026-09-27)
+# Static internal RAM: 51% after moving big buffers to PSRAM (2026-09-27). Ratchet, never raise.
+DIRAM_BUDGET = 0.58
 APP_BUDGET = 0.60  # app binary vs its partition (was 39%)
 
 

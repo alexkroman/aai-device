@@ -172,6 +172,18 @@ void test_agent_init(void)
     }
 }
 
+static bool session_settled(void) { return g_obs.ready || g_obs.closed; }
+
+void test_warm_up_network(void)
+{
+    test_reset_observations();
+    agent_start();
+    test_wait_for(session_settled, 10000);
+    agent_stop();
+    vTaskDelay(pdMS_TO_TICKS(300));
+    test_reset_observations();
+}
+
 void test_reset_observations(void) { memset(&g_obs, 0, sizeof(g_obs)); }
 
 bool test_wait_for(bool (*cond)(void), int timeout_ms)

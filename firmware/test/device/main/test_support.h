@@ -21,6 +21,7 @@ void test_board_init(void);
 void test_voice_init(void);  // AFE fed from test_play_clip() instead of the mics
 bool test_wifi_init(void);   // false if Wi-Fi didn't connect within 15 s
 void test_agent_init(void);
+void test_warm_up_network(void);  // one throwaway session (fine if the agent is down)
 
 // Feed a clip into the AFE in real time, followed by silence. Non-blocking.
 void test_play_clip(clip_t clip);
