@@ -1,0 +1,4 @@
+# libFuzzer's own -max_total_time timer thread, freed by process exit. Per-input
+# leak checks (which cover our code) are unaffected.
+leak:__thread_struct
+leak:fuzzer::FuzzerDriver

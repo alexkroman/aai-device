@@ -1,0 +1,15 @@
+# Matches the existing code: 4-space indent, function braces on their own line.
+BasedOnStyle: LLVM
+IndentWidth: 4
+ColumnLimit: 120
+BreakBeforeBraces: Linux
+PointerAlignment: Right
+AllowShortFunctionsOnASingleLine: All
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AlignConsecutiveMacros: Consecutive
+AlignTrailingComments: true
+SpacesBeforeTrailingComments: 2
+SortIncludes: Never
+IncludeBlocks: Preserve
+IndentCaseLabels: false

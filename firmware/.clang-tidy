@@ -1,0 +1,26 @@
+# Static analysis for the host-buildable modules and host tests (see Makefile: lint-tidy).
+Checks: >
+  clang-analyzer-*,
+  bugprone-*,
+  cert-*,
+  misc-*,
+  performance-*,
+  portability-*,
+  readability-misleading-indentation,
+  readability-non-const-parameter,
+  readability-redundant-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-reserved-identifier,
+  -bugprone-assignment-in-if-condition,
+  -cert-dcl37-c,
+  -cert-dcl51-cpp,
+  -cert-err33-c,
+  -cert-msc30-c,
+  -cert-msc50-cpp,
+  -misc-include-cleaner,
+  -portability-avoid-pragma-once,
+  -misc-unused-parameters,
+  -misc-use-internal-linkage,
+  -clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling
+WarningsAsErrors: '*'
+HeaderFilterRegex: '.*/components/aai_device/.*'

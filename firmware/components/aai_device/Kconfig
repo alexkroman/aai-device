@@ -1,0 +1,39 @@
+menu "AAI Voice Device"
+
+    config AAI_WIFI_SSID
+        string "Wi-Fi SSID"
+        default ""
+
+    config AAI_WIFI_PASSWORD
+        string "Wi-Fi password"
+        default ""
+
+    config AAI_AGENT_URL
+        string "Agent WebSocket URL"
+        default "ws://192.168.1.10:3000/websocket"
+        help
+            The /websocket endpoint of the voice agent, e.g. `aai dev` on your computer.
+
+    config AAI_FOLLOWUP_MS
+        int "Follow-up window (ms)"
+        default 8000
+        help
+            After the agent finishes speaking, keep listening this long for a follow-up
+            before hanging up and going back to wake word detection.
+
+    config AAI_FULL_DUPLEX
+        bool "Stream the mic to the agent while it is speaking"
+        default n
+        help
+            Off (default, like commercial smart speakers): while the agent talks,
+            only the on-device wake word listens, and saying it interrupts. On:
+            you can interrupt by just talking, but residual speaker echo can reach
+            the agent's speech recognition and make it answer itself. Only enable
+            with good acoustic separation (external speaker, low volume).
+
+    config AAI_VOLUME
+        int "Speaker volume (0-100)"
+        range 0 100
+        default 70
+
+endmenu

@@ -1,0 +1,11 @@
+{
+    // CMake Tools can't configure an ESP-IDF project (it needs export.sh's environment),
+    // and as IntelliSense's configuration provider it left every include unresolved.
+    // IntelliSense reads the compile databases the real builds emit instead
+    // (.vscode/c_cpp_properties.json); run `make build-firmware` once to create them.
+    "cmake.configureOnOpen": false,
+    "cmake.ignoreCMakeListsMissing": true,
+    "C_Cpp.default.configurationProvider": null,
+    "C_Cpp.errorSquiggles": "enabled",
+    "files.associations": { "*.h": "c" }
+}

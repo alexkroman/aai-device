@@ -1,0 +1,60 @@
+# Host unit tests for the hardware-independent firmware modules.
+#   cmake -S test/host -B build-host && cmake --build build-host && ctest --test-dir build-host
+cmake_minimum_required(VERSION 3.16)
+project(aai_device_host_tests C)
+
+set(CMAKE_C_STANDARD 11)
+set(FW ${CMAKE_CURRENT_LIST_DIR}/../..)
+if(DEFINED ENV{IDF_PATH})
+    set(IDF $ENV{IDF_PATH})
+else()
+    set(IDF $ENV{HOME}/esp/esp-idf-v5.5)
+endif()
+set(CJSON ${FW}/managed_components/espressif__cjson/cJSON)
+if(NOT EXISTS ${CJSON}/cJSON.c)
+    message(FATAL_ERROR "cJSON not found; run `idf.py reconfigure` in firmware/ first")
+endif()
+
+option(SANITIZE "Build with AddressSanitizer + UndefinedBehaviorSanitizer" ON)
+option(COVERAGE "Build with LLVM source-based coverage (no sanitizers)" OFF)
+if(COVERAGE)
+    set(SANITIZE OFF)
+    add_compile_options(-fprofile-instr-generate -fcoverage-mapping)
+    add_link_options(-fprofile-instr-generate)
+endif()
+add_compile_options(-Wall -Wextra -Werror -Wshadow -Wformat=2 -g)
+if(SANITIZE)
+    add_compile_options(-fsanitize=address,undefined -fno-sanitize-recover=all)
+    add_link_options(-fsanitize=address,undefined)
+endif()
+
+add_library(unity STATIC ${IDF}/components/unity/unity/src/unity.c)
+target_include_directories(unity PUBLIC ${IDF}/components/unity/unity/src)
+target_compile_options(unity PRIVATE -Wno-error)
+
+add_library(cjson STATIC ${CJSON}/cJSON.c)
+target_include_directories(cjson PUBLIC ${CJSON})
+target_compile_options(cjson PRIVATE -Wno-error -Wno-deprecated-declarations)
+
+enable_testing()
+foreach(name protocol)
+    add_executable(test_${name} test_${name}.c ${FW}/components/aai_device/${name}.c)
+    target_include_directories(test_${name} PRIVATE ${FW}/components/aai_device/include)
+    target_link_libraries(test_${name} unity cjson m)
+    add_test(NAME ${name} COMMAND test_${name})
+    set_tests_properties(${name} PROPERTIES ENVIRONMENT
+        "ASAN_OPTIONS=detect_leaks=1:strict_string_checks=1:detect_stack_use_after_return=1;UBSAN_OPTIONS=print_stacktrace=1")
+endforeach()
+
+# libFuzzer targets (needs upstream clang):  cmake -DFUZZ=ON ...
+option(FUZZ "Build libFuzzer harnesses instead of unit tests" OFF)
+if(FUZZ)
+    foreach(target protocol pcm)
+        add_executable(fuzz_${target} ${CMAKE_CURRENT_LIST_DIR}/../fuzz/fuzz_${target}.c
+                       ${FW}/components/aai_device/protocol.c)
+        target_include_directories(fuzz_${target} PRIVATE ${FW}/components/aai_device/include)
+        target_compile_options(fuzz_${target} PRIVATE -fsanitize=fuzzer)
+        target_link_options(fuzz_${target} PRIVATE -fsanitize=fuzzer)
+        target_link_libraries(fuzz_${target} cjson m)
+    endforeach()
+endif()

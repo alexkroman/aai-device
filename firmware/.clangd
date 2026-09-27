@@ -1,0 +1,6 @@
+# clangd (host clang) doesn't know the Xtensa GCC flags in ESP-IDF's compile database.
+CompileFlags:
+  CompilationDatabase: build
+  Remove: [-mlongcalls, -mdisable-hardware-atomics, -fno-shrink-wrap, -fstrict-volatile-bitfields,
+           -fno-tree-switch-conversion, -mtext-section-literals, -fno-jump-tables, -fno-shrink-wrap]
+  Add: [-D__XTENSA__, -Wno-unknown-warning-option]
