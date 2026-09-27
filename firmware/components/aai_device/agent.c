@@ -20,14 +20,19 @@
 
 static const char *TAG = "agent";
 
-#define MIC_BUF_BYTES     (2 * BOARD_SAMPLE_RATE * 2)  // 2 s pre-roll while connecting
-#define SPK_BUF_BYTES     (8 * BOARD_SAMPLE_RATE * 2)  // server paces ~1.5 s ahead
-#define SEND_CHUNK        512                          // samples, 32 ms @ 16 kHz
-#define WS_BUFFER_SIZE    4096
-#define TEXT_MAX          8192
-#define RESUME_WINDOW_US  (110LL * 1000 * 1000)  // server keeps sessions 120 s
-#define PROGRESS_EVERY_US (500 * 1000)
-#define AMP_IDLE_OFF_US   (1000 * 1000)
+#define MIC_BUF_BYTES  (2 * BOARD_SAMPLE_RATE * 2)  // 2 s pre-roll while connecting
+#define SPK_BUF_BYTES  (8 * BOARD_SAMPLE_RATE * 2)  // server paces ~1.5 s ahead
+#define SEND_CHUNK     512                          // samples, 32 ms @ 16 kHz
+#define WS_BUFFER_SIZE 4096
+// esp_websocket_client ABORTS the connection when a send times out, so this is not a
+// "drop the frame" knob: 50 ms (the old mic value) turned a brief Wi-Fi stall into a
+// dead session. Backpressure is absorbed upstream instead — agent_push_mic() never
+// blocks, so a slow socket drops mic audio at the stream buffer.
+#define WS_SEND_TIMEOUT_MS 1000
+#define TEXT_MAX           8192
+#define RESUME_WINDOW_US   (110LL * 1000 * 1000)  // server keeps sessions 120 s
+#define PROGRESS_EVERY_US  (500 * 1000)
+#define AMP_IDLE_OFF_US    (1000 * 1000)
 
 static esp_websocket_client_handle_t s_ws;
 static StreamBufferHandle_t s_mic_sb, s_spk_sb;
@@ -52,7 +57,7 @@ static void touch(void) { s_last_activity_us = now_us(); }
 static void send_json(const char *json)
 {
     if (s_ws && esp_websocket_client_is_connected(s_ws)) {
-        if (esp_websocket_client_send_text(s_ws, json, strlen(json), pdMS_TO_TICKS(500)) < 0) {
+        if (esp_websocket_client_send_text(s_ws, json, strlen(json), pdMS_TO_TICKS(WS_SEND_TIMEOUT_MS)) < 0) {
             ESP_LOGW(TAG, "send failed: %s", json);
         }
     }
@@ -206,10 +211,11 @@ static void sender_task(void *arg)
         size_t want = resampler_max_in(&rs, sizeof(out) / sizeof(out[0]));
         want = want < SEND_CHUNK ? want : SEND_CHUNK;
         size_t got = xStreamBufferReceive(s_mic_sb, in, want * 2, pdMS_TO_TICKS(50)) / 2;
-        if (got > 0) {
+        // Checked per frame: after an abort this loop runs until agent_stop() clears s_active,
+        // and every send in between would log another failed write on the dead socket.
+        if (got > 0 && esp_websocket_client_is_connected(s_ws)) {
             size_t n = resampler_process(&rs, in, got, out);
-            // A stalled socket must not back up the mic: drop instead of queueing.
-            esp_websocket_client_send_bin(s_ws, (const char *)out, n * 2, pdMS_TO_TICKS(50));
+            esp_websocket_client_send_bin(s_ws, (const char *)out, n * 2, pdMS_TO_TICKS(WS_SEND_TIMEOUT_MS));
         }
         size_t buffered = xStreamBufferBytesAvailable(s_spk_sb);
         if (buffered > 0 && now_us() - last_progress > PROGRESS_EVERY_US) {
