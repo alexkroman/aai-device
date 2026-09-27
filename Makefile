@@ -20,6 +20,8 @@ UNIT_SRCS := $(FW)/components/aai_device/resample.c $(FW)/components/aai_device/
 FUZZ_SRCS := $(wildcard $(FW)/test/fuzz/fuzz_*.c)
 FUZZ_SECS ?= 15
 DEVICE_STAMP := $(FW)/test/device/.last-pass
+# The local SDK checkout agent/package.json links against. Keep the two in step.
+AAI_SDK   ?= $(HOME)/Code/aai/agent-builtin-api-tools
 
 .PHONY: check require-idf lint lint-format lint-tidy lint-cppcheck lint-python lint-agent \
         build-firmware test-host test-fuzz test-coverage check-contract check-size test-agent \
@@ -72,7 +74,7 @@ check-size: build-firmware
 	python3 $(FW)/tools/check_size.py $(FW)/build/size.json $(FW)/build/aai_device.bin $(FW)/partitions.csv
 
 check-contract:
-	python3 $(FW)/tools/check_protocol_contract.py $(or $(AAI_SDK),$(HOME)/Code/aai/agent)
+	python3 $(FW)/tools/check_protocol_contract.py $(AAI_SDK)
 
 # ---- host tests (Homebrew LLVM: only upstream ASan has LeakSanitizer on macOS) --------
 
@@ -138,7 +140,7 @@ format:
 	cd agent && pnpm run lint:fix
 
 agent:
-	cd agent && AAI_DEV_HOST=0.0.0.0 node $(HOME)/Code/aai/agent/packages/aai-cli/bin.mjs dev -p 3000
+	cd agent && AAI_DEV_HOST=0.0.0.0 node $(AAI_SDK)/packages/aai-cli/bin.mjs dev -p 3000
 
 flash: require-idf
 	cd $(FW) && idf.py build flash

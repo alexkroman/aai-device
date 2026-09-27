@@ -56,24 +56,22 @@ describe("quickstart-agent template", () => {
     }
   });
 
-  test("the two DISCOVERED halves are really discovered", () => {
-    // The template's central claim, and until it shipped these files there was
-    // nothing here to make it. `virtual:aai/agent` is the lowering a DEPLOYED
-    // agent gets — the authored def plus what `tools/` and `system-prompt.md`
-    // declare — so this asserts the thing the quickstart tells a reader to
-    // trust: the tool is registered by being a file, and the prompt is applied
-    // by sitting beside `agent.ts`.
+  test("weather comes from the open_meteo builtin, and the prompt is discovered", () => {
+    // `virtual:aai/agent` is the lowering a DEPLOYED agent gets — the authored
+    // def plus what `system-prompt.md` declares. `deployedDef` rather than
+    // `agentDef`: the raw export has the framework-default prompt, which is
+    // exactly what makes an assertion against it unable to see the file go
+    // missing.
     //
-    // `deployedDef` rather than `agentDef` above: the raw export has no tools
-    // and the framework-default prompt, which is exactly what makes an
-    // assertion against it unable to see either half go missing.
-    expect(Object.keys(deployedDef.tools ?? {})).toEqual(["get_weather"]);
+    // No `tools/` directory: weather is the host-side `open_meteo` builtin.
+    expect(deployedDef.builtinTools).toContain("open_meteo");
+    expect(Object.keys(deployedDef.tools ?? {})).toEqual([]);
     // Not "some prompt" but NOT the framework's — `system-prompt.md` is the
     // one file an author edits first, and a prompt silently ignored produces
     // an agent that behaves plausibly and wrongly rather than one that
     // visibly cannot do something.
     expect(deployedDef.systemPrompt).not.toBe(DEFAULT_SYSTEM_PROMPT);
-    expect(deployedDef.systemPrompt).toContain("get_weather");
+    expect(deployedDef.systemPrompt).toContain("open_meteo");
   });
 
   test("write no prompt and you already have one: the SDK's voice core", () => {

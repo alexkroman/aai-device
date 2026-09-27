@@ -44,33 +44,31 @@ describeEval(agentDef, (test) => {
 
       expect(turn.completed).toBe(true);
       expect(turn.text).toMatch(/paris/i);
-      // The agent's one tool looks up WEATHER, so reaching for it here would
-      // be a real finding — not "this agent has no tools", which is what this
-      // line used to say and stopped being true the day it got one.
+      // The agent's one lookup tool is WEATHER, so reaching for it here would
+      // be a real finding.
       expect(turn.toolCalls).toEqual([]);
     },
     { stubReply: "Paris is the capital of France." },
   );
 
   test(
-    "reaches for the tool that is only a FILE",
+    "reaches for the open_meteo builtin",
     async ({ session }) => {
       const turn = await session.say("What's the weather in Denver?");
 
-      // The claim the quickstart makes about this project: `get_weather` is a
-      // file in `tools/` that nothing imports and nothing registers, and this
-      // is the case that would notice if the directory went missing — a
-      // scripted run still boots the agent and still executes the tool a
-      // script names, so it checks the wiring even with no key set.
-      expect(toolNames(turn.toolCalls)).toEqual(["get_weather"]);
+      // `open_meteo` is enabled only by name in `builtinTools`, and this is
+      // the case that would notice if it went missing — a scripted run still
+      // boots the agent and still executes the tool a script names, so it
+      // checks the wiring even with no key set.
+      expect(toolNames(turn.toolCalls)).toEqual(["open_meteo"]);
       expect(turn.text).toMatch(/denver/i);
     },
-    // The tool really runs, and really calls wttr.in. Nothing here asserts on
-    // what it answered: a service that is down returns the `{ error }` the
-    // tool is written to hand back, and the claim is about the CHOICE.
+    // The tool really runs, and really calls Open-Meteo. Nothing here asserts
+    // on what it answered: a service that is down returns an error the model
+    // reads, and the claim is about the CHOICE.
     {
       stubReply: [
-        { tool: "get_weather", args: { city: "Denver" } },
+        { tool: "open_meteo", args: { location: "Denver" } },
         "It's 54 degrees and clear in Denver.",
       ],
     },
@@ -123,7 +121,7 @@ describeEval(agentDef, (test) => {
       // The call ending on the caller's terms is the first thing to know: a
       // call that ran out of turns usually means the goal was never met.
       expect(call.endedBy, call.transcript()).toBe("caller");
-      expect(call.metrics.toolCallCounts.get_weather ?? 0).toBeGreaterThan(0);
+      expect(call.metrics.toolCallCounts.open_meteo ?? 0).toBeGreaterThan(0);
 
       // What deterministic readers cannot see — whether the answer MEANT
       // anything — goes to a model-graded judge, one ruling per criterion.
@@ -137,7 +135,7 @@ describeEval(agentDef, (test) => {
     },
     {
       stubReply: [
-        { tool: "get_weather", args: { city: "Seattle" } },
+        { tool: "open_meteo", args: { location: "Seattle" } },
         "It's raining in Seattle, so bring an umbrella.",
       ],
     },
