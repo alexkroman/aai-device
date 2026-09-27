@@ -12,13 +12,8 @@ static void copy_str(char *dst, size_t dst_len, const cJSON *item)
 
 static int valid_rate(const cJSON *item, int fallback)
 {
-    // 8-48 kHz, and a multiple of 4000 or 11025: what the rate converter supports.
     double v = cJSON_GetNumberValue(item);  // NaN when missing or not a number
-    if (!(v >= 8000 && v <= 48000) || v != (double)(int)v) {
-        return fallback;
-    }
-    int rate = (int)v;
-    return rate % 4000 == 0 || rate % 11025 == 0 ? rate : fallback;
+    return v >= 8000 && v <= 48000 && v == (double)(int)v ? (int)v : fallback;
 }
 
 bool proto_parse(const char *json, size_t len, proto_msg_t *out)

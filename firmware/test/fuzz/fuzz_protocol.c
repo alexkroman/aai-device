@@ -16,7 +16,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
         }
         if (msg.type == PROTO_SESSION_CONFIGURED && (msg.sample_rate < 8000 || msg.sample_rate > 48000 ||
                                                      msg.tts_sample_rate < 8000 || msg.tts_sample_rate > 48000)) {
-            __builtin_trap();  // the rate converter would reject it
+            __builtin_trap();  // resampler_init would divide by zero / misbehave
         }
         char url[128];
         proto_session_url("ws://host:3000/websocket", msg.session_id, url, sizeof(url));

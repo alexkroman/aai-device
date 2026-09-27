@@ -15,7 +15,7 @@ IDF_PY    := $(or $(IDF_PYTHON_ENV_PATH),$(HOME)/.espressif/python_env/idf5.5_py
 SYSROOT   := --extra-arg=-isysroot$(shell xcrun --show-sdk-path 2>/dev/null)
 C_SOURCES := $(shell find $(FW)/main $(FW)/components $(FW)/test -name '*.[ch]' -not -path '*/build*' \
                -not -path '*/managed_components/*')
-UNIT_SRCS := $(FW)/components/aai_device/protocol.c \
+UNIT_SRCS := $(FW)/components/aai_device/resample.c $(FW)/components/aai_device/protocol.c \
              $(wildcard $(FW)/test/host/test_*.c)
 FUZZ_SRCS := $(wildcard $(FW)/test/fuzz/fuzz_*.c)
 FUZZ_SECS ?= 15
@@ -92,7 +92,7 @@ test-host: $(FW)/build-host/compile_commands.json
 # runs, so every `make check` starts from what previous runs discovered.
 test-fuzz: $(FW)/build-fuzz/compile_commands.json
 	cmake --build $(FW)/build-fuzz
-	@for t in protocol pcm; do \
+	@for t in protocol pcm audio; do \
 	  mkdir -p $(FW)/build-fuzz/corpus-$$t; \
 	  if ASAN_OPTIONS=detect_leaks=1 LSAN_OPTIONS=suppressions=$(FW)/test/fuzz/lsan.supp \
 	    $(FW)/build-fuzz/fuzz_$$t -max_total_time=$(FUZZ_SECS) -artifact_prefix=$(FW)/build-fuzz/ \
@@ -108,7 +108,7 @@ test-coverage:
 	cd $(FW)/build-cov && for t in test_*; do LLVM_PROFILE_FILE=$$t.profraw ./$$t >/dev/null || exit 1; done
 	$(LLVM)/llvm-profdata merge -o $(FW)/build-cov/all.profdata $(FW)/build-cov/*.profraw
 	$(LLVM)/llvm-cov export -summary-only -instr-profile=$(FW)/build-cov/all.profdata \
-	  $(FW)/build-cov/test_protocol > $(FW)/build-cov/summary.json
+	  $(FW)/build-cov/test_resample -object $(FW)/build-cov/test_protocol > $(FW)/build-cov/summary.json
 	python3 $(FW)/tools/check_coverage.py $(FW)/build-cov/summary.json
 
 test-agent:

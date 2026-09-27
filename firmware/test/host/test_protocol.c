@@ -33,7 +33,7 @@ static void test_session_configured_s2s_rates(void)
 
 static void test_session_configured_bad_rates_fall_back(void)
 {
-    // A zero/missing rate would make the rate converter fail to open.
+    // A zero/missing rate would divide by zero in resampler_init.
     TEST_ASSERT_TRUE(parse("{\"type\":\"session.configured\",\"sampleRate\":0,\"ttsSampleRate\":\"fast\"}"));
     TEST_ASSERT_EQUAL(PROTO_DEFAULT_SAMPLE_RATE, msg.sample_rate);
     TEST_ASSERT_EQUAL(PROTO_DEFAULT_TTS_SAMPLE_RATE, msg.tts_sample_rate);
@@ -42,14 +42,13 @@ static void test_session_configured_bad_rates_fall_back(void)
     TEST_ASSERT_EQUAL(PROTO_DEFAULT_TTS_SAMPLE_RATE, msg.tts_sample_rate);
 }
 
-static void test_session_configured_unsupported_rates_fall_back(void)
+static void test_session_configured_odd_rates(void)
 {
-    // Rate converter needs multiples of 4000 or 11025; anything else would fail to open.
-    TEST_ASSERT_TRUE(parse("{\"type\":\"session.configured\",\"sampleRate\":22050,\"ttsSampleRate\":44100}"));
+    // The resampler handles any integer rate in range; fractional rates are nonsense.
+    TEST_ASSERT_TRUE(parse("{\"type\":\"session.configured\",\"sampleRate\":22050,\"ttsSampleRate\":17000}"));
     TEST_ASSERT_EQUAL(22050, msg.sample_rate);
-    TEST_ASSERT_EQUAL(44100, msg.tts_sample_rate);
-    TEST_ASSERT_TRUE(parse("{\"type\":\"session.configured\",\"sampleRate\":17000,\"ttsSampleRate\":24000.5}"));
-    TEST_ASSERT_EQUAL(PROTO_DEFAULT_SAMPLE_RATE, msg.sample_rate);
+    TEST_ASSERT_EQUAL(17000, msg.tts_sample_rate);
+    TEST_ASSERT_TRUE(parse("{\"type\":\"session.configured\",\"ttsSampleRate\":24000.5}"));
     TEST_ASSERT_EQUAL(PROTO_DEFAULT_TTS_SAMPLE_RATE, msg.tts_sample_rate);
 }
 
@@ -213,7 +212,7 @@ int main(void)
     RUN_TEST(test_session_configured);
     RUN_TEST(test_session_configured_s2s_rates);
     RUN_TEST(test_session_configured_bad_rates_fall_back);
-    RUN_TEST(test_session_configured_unsupported_rates_fall_back);
+    RUN_TEST(test_session_configured_odd_rates);
     RUN_TEST(test_barge_in_events);
     RUN_TEST(test_speech_started_is_not_barge_in);
     RUN_TEST(test_transcripts);

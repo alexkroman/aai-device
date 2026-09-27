@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 FLOORS = {"lines": 90.0, "branches": 85.0, "functions": 100.0}
-MODULES = ("components/aai_device/protocol.c",)
+MODULES = ("components/aai_device/resample.c", "components/aai_device/protocol.c")
 
 
 def main() -> int:

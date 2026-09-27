@@ -14,7 +14,7 @@
 #include "freertos/stream_buffer.h"
 #include "freertos/task.h"
 #include "protocol.h"
-#include "esp_ae_rate_cvt.h"
+#include "resample.h"
 #include "sdkconfig.h"
 
 static const char *TAG = "agent";
@@ -37,72 +37,8 @@ static atomic_bool s_flush;       // player should drop buffered audio
 static atomic_int_fast64_t s_last_activity_us, s_last_play_us;
 static int s_in_rate = BOARD_SAMPLE_RATE, s_tts_rate = 24000;
 
-// ---- sample-rate conversion (esp_audio_effects) -----------------------------
-
-typedef struct {
-    esp_ae_rate_cvt_handle_t handle;  // NULL when src == dst (passthrough)
-    uint32_t src, dst;
-} rate_cvt_t;
-
-static bool rate_open(rate_cvt_t *r, uint32_t src, uint32_t dst)
-{
-    *r = (rate_cvt_t){.src = src, .dst = dst};
-    if (src == dst) {
-        return true;
-    }
-    esp_ae_rate_cvt_cfg_t cfg = {
-        .src_rate = src,
-        .dest_rate = dst,
-        .channel = 1,
-        .bits_per_sample = 16,
-        .complexity = 2,
-        .perf_type = ESP_AE_RATE_CVT_PERF_TYPE_MEMORY,  // internal RAM is the scarce resource
-    };
-    if (esp_ae_rate_cvt_open(&cfg, &r->handle) != ESP_AE_ERR_OK) {
-        ESP_LOGE(TAG, "rate converter %lu -> %lu Hz failed", (unsigned long)src, (unsigned long)dst);
-        return false;
-    }
-    return true;
-}
-
-static void rate_close(rate_cvt_t *r)
-{
-    if (r->handle) {
-        esp_ae_rate_cvt_close(r->handle);
-        r->handle = NULL;
-    }
-}
-
-// Largest input whose converted output fits `cap` samples (the library only offers
-// the forward bound, so shrink an estimate until it fits).
-static size_t rate_max_in(const rate_cvt_t *r, size_t cap)
-{
-    if (!r->handle) {
-        return cap;
-    }
-    size_t n = (size_t)((uint64_t)cap * r->src / r->dst);
-    for (uint32_t out_max; n > 0; n -= n / 16 + 1) {
-        if (esp_ae_rate_cvt_get_max_out_sample_num(r->handle, n, &out_max) == ESP_AE_ERR_OK && out_max <= cap) {
-            break;
-        }
-    }
-    return n;
-}
-
-static size_t rate_process(const rate_cvt_t *r, int16_t *in, size_t n, int16_t *out, size_t cap)
-{
-    if (!r->handle) {
-        memcpy(out, in, n * sizeof(int16_t));
-        return n;
-    }
-    uint32_t produced = cap;
-    if (esp_ae_rate_cvt_process(r->handle, in, n, out, &produced) != ESP_AE_ERR_OK) {
-        return 0;
-    }
-    return produced;
-}
-
-static rate_cvt_t s_tts_rate_cvt;  // agent TTS rate -> board rate; owned by the websocket task
+static volatile int64_t s_convert_max_us;  // diagnostics: slowest TTS conversion call
+static resampler_t s_tts_rs;               // agent TTS rate -> board rate; owned by the websocket task
 static char s_session_id[96];
 // Only resume sessions with a conversation: the server re-greets (on purpose) when
 // a resumed session has no history, and that greeting would mute the question.
@@ -131,11 +67,13 @@ static void on_audio(const uint8_t *data, size_t len)
 
     size_t n = pcm_align(&aligner, data, len, in);
     // Slice so the output fits `out` at any negotiated rate (e.g. 8 kHz TTS upsamples 2x).
-    const size_t cap = sizeof(out) / sizeof(out[0]);
-    size_t slice = rate_max_in(&s_tts_rate_cvt, cap);
+    size_t slice = resampler_max_in(&s_tts_rs, sizeof(out) / sizeof(out[0]));
     for (size_t pos = 0; slice > 0 && pos < n; pos += slice) {
         size_t chunk = n - pos < slice ? n - pos : slice;
-        size_t produced = rate_process(&s_tts_rate_cvt, in + pos, chunk, out, cap);
+        int64_t t0 = now_us();
+        size_t produced = resampler_process(&s_tts_rs, in + pos, chunk, out);
+        int64_t took = now_us() - t0;
+        s_convert_max_us = took > s_convert_max_us ? took : s_convert_max_us;
         if (xStreamBufferSend(s_spk_sb, out, produced * 2, 0) != produced * 2) {
             ESP_LOGW(TAG, "speaker buffer overflow");
         }
@@ -161,8 +99,7 @@ static void on_event(const char *json, size_t len)
             strlcpy(s_session_id, msg.session_id, sizeof(s_session_id));
         }
         ESP_LOGI(TAG, "session %s: mic %d Hz, tts %d Hz", s_session_id, s_in_rate, s_tts_rate);
-        rate_close(&s_tts_rate_cvt);
-        rate_open(&s_tts_rate_cvt, s_tts_rate, BOARD_SAMPLE_RATE);
+        resampler_init(&s_tts_rs, s_tts_rate, BOARD_SAMPLE_RATE);
         send_json("{\"type\":\"audio_ready\"}");
         s_configured = true;
         aai_events_post(AAI_EVENT_SESSION_READY, NULL, 0);
@@ -245,7 +182,7 @@ static void sender_task(void *arg)
 {
     static int16_t in[SEND_CHUNK];
     static int16_t out[SEND_CHUNK * 2 + 4];
-    rate_cvt_t rate = {0};  // board rate -> agent input rate; owned by this task
+    resampler_t rs;  // board rate -> agent input rate; owned by this task
     bool was_configured = false;
     int64_t last_progress = 0;
 
@@ -255,21 +192,19 @@ static void sender_task(void *arg)
                 xStreamBufferReset(s_mic_sb);  // drop leftovers so the next session starts clean
             }
             was_configured = false;
-            rate_close(&rate);
             vTaskDelay(pdMS_TO_TICKS(10));
             continue;
         }
         if (!was_configured) {
-            rate_open(&rate, BOARD_SAMPLE_RATE, s_in_rate);
+            resampler_init(&rs, BOARD_SAMPLE_RATE, s_in_rate);
             was_configured = true;
         }
         // Read only as much as fits `out` after resampling (48 kHz agents upsample 3x).
-        const size_t cap = sizeof(out) / sizeof(out[0]);
-        size_t want = rate_max_in(&rate, cap);
+        size_t want = resampler_max_in(&rs, sizeof(out) / sizeof(out[0]));
         want = want < SEND_CHUNK ? want : SEND_CHUNK;
         size_t got = xStreamBufferReceive(s_mic_sb, in, want * 2, pdMS_TO_TICKS(50)) / 2;
         if (got > 0) {
-            size_t n = rate_process(&rate, in, got, out, cap);
+            size_t n = resampler_process(&rs, in, got, out);
             // A stalled socket must not back up the mic: drop instead of queueing.
             esp_websocket_client_send_bin(s_ws, (const char *)out, n * 2, pdMS_TO_TICKS(50));
         }
@@ -289,6 +224,8 @@ static void player_task(void *arg)
     static int16_t buf[256];
     int64_t burst_start = 0;  // 0 = idle
     size_t burst_samples = 0;
+    unsigned underruns = 0;  // buffer ran dry mid-burst (audible gap)
+    int64_t max_gap_us = 0;
     for (;;) {
         if (s_flush) {
             size_t dropped = xStreamBufferBytesAvailable(s_spk_sb);
@@ -304,7 +241,14 @@ static void player_task(void *arg)
             if (!burst_start) {
                 burst_start = now_us();
                 burst_samples = 0;
+                underruns = 0;
+                max_gap_us = 0;
                 ESP_LOGI(TAG, "playback started");
+            } else if (now_us() - s_last_play_us > 30 * 1000) {
+                // Audio resumed after the DMA would have drained: the listener heard a gap.
+                underruns++;
+                int64_t gap = now_us() - s_last_play_us;
+                max_gap_us = gap > max_gap_us ? gap : max_gap_us;
             }
             burst_samples += got;
             board_speaker_enable(true);  // amp only on while there is audio to play
@@ -312,7 +256,10 @@ static void player_task(void *arg)
             s_last_play_us = now_us();
         } else {
             if (burst_start && now_us() - s_last_play_us > 200 * 1000) {
-                ESP_LOGI(TAG, "playback ended (%u ms of audio)", (unsigned)(burst_samples * 1000 / BOARD_SAMPLE_RATE));
+                ESP_LOGI(TAG, "playback ended (%u ms of audio, %u underruns, longest gap %u ms, convert max %u us)",
+                         (unsigned)(burst_samples * 1000 / BOARD_SAMPLE_RATE), underruns, (unsigned)(max_gap_us / 1000),
+                         (unsigned)s_convert_max_us);
+                s_convert_max_us = 0;
                 burst_start = 0;
             }
             if (now_us() - s_last_play_us > AMP_IDLE_OFF_US) {
@@ -389,7 +336,6 @@ void agent_stop(void)
     } else {
         esp_websocket_client_stop(s_ws);  // server already hung up; just end the task
     }
-    rate_close(&s_tts_rate_cvt);  // websocket task has stopped, so nothing is converting
     ESP_LOGI(TAG, "session ended");
 }
 

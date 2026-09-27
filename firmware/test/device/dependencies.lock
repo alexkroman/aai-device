@@ -75,17 +75,6 @@ dependencies:
       registry_url: https://components.espressif.com/
       type: service
     version: 2.5.5
-  espressif/esp_audio_effects:
-    component_hash: a7f3625a9a49849afe5c98a9469da58ec3176c8901c908086cb4d8d7886e54e1
-    dependencies:
-    - name: espressif/gmf_fft
-      registry_url: https://components.espressif.com
-      require: private
-      version: ~1.1
-    source:
-      registry_url: https://components.espressif.com/
-      type: service
-    version: 1.4.3
   espressif/esp_codec_dev:
     component_hash: 4779f31a3ba3f9b38aee1afe6ccb9ba8f6108dc3a6e77d39d7d714e9a215371b
     dependencies:
@@ -149,13 +138,6 @@ dependencies:
       registry_url: https://components.espressif.com/
       type: service
     version: 1.8.0
-  espressif/gmf_fft:
-    component_hash: de42f5953b90989ca6588bacd69b0908c7265f4f1eaea8b1d3f163e705661bd4
-    dependencies: []
-    source:
-      registry_url: https://components.espressif.com
-      type: service
-    version: 1.1.0
   espressif/led_strip:
     component_hash: 28621486f77229aaf81c71f5e15d6fbf36c2949cf11094e07090593e659e7639
     dependencies:
@@ -172,12 +154,11 @@ dependencies:
     version: 5.5.5
 direct_dependencies:
 - espressif/esp-sr
-- espressif/esp_audio_effects
 - espressif/esp_codec_dev
 - espressif/esp_io_expander_tca95xx_16bit
 - espressif/esp_websocket_client
 - espressif/led_strip
 - idf
-manifest_hash: c493117c31081df4a5028a3728283a488bd117fdcd163bcec2a827be00829230
+manifest_hash: 32c459c1ce2c8ffe5604ebf713cbb40ae4e4643de396ea8ef05623bda7f3e16e
 target: esp32s3
 version: 2.0.0
