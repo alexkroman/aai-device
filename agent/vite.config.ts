@@ -32,6 +32,10 @@ export default defineConfig({
     }),
     tailwindcss(),
   ],
+  // ui/cues.ts plays the firmware's own timer alarm, from outside this project.
+  server: {
+    fs: { allow: [".", "../firmware/components/aai_device/sounds"] },
+  },
   build: {
     target: "es2022",
     minify: true,
