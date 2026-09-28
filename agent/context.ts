@@ -1,4 +1,6 @@
+import { VERBATIM_WINDOW_MS } from "./history-window.ts";
 import { allMemories, type Memory } from "./memory.ts";
+import { describeProfile, type Profile, readProfile } from "./profile.ts";
 import { rest } from "./supabase.ts";
 import { MAX_DIGESTS } from "./workflows/memorize.ts";
 
@@ -13,31 +15,58 @@ import { MAX_DIGESTS } from "./workflows/memorize.ts";
 //
 // The last VERBATIM_WINDOW_MS of sessions are loaded word for word by the SDK instead
 // (`historySince`); their digests are left out here so nothing is said twice.
+//
+// The household profile leads it (name, home address, phone): the exact fields tools
+// act on, and until this was here the model could not see them, so it answered "what's my
+// address" with "I don't have it saved" while the pollen tool read it fine.
 
 type Ctx = { env: Readonly<Partial<Record<string, string>>>; signal?: AbortSignal };
-
-/** Sessions this recent are replayed verbatim; older ones are digests. */
-export const VERBATIM_WINDOW_MS = 6 * 60 * 60 * 1000;
 
 type Digest = { started_at: string; digest: string };
 
 export async function sessionContext(
-  ctx: Ctx & { clientId?: string | undefined },
+  ctx: Ctx & { clientId?: string | undefined; sessionId?: string | undefined },
   now = new Date(),
-): Promise<{ instructions?: string; historySince?: number }> {
+): Promise<{ instructions?: string; historySince?: number; location?: string }> {
   const since = now.getTime() - VERBATIM_WINDOW_MS;
-  const [memories, digests, older] = await Promise.allSettled([
+  const [profile, memories, digests, older] = await Promise.allSettled([
+    readProfile(ctx),
     allMemories(ctx),
     ctx.clientId ? recentDigests(ctx, ctx.clientId, since) : Promise.resolve([]),
     ctx.clientId ? olderHistory(ctx, ctx.clientId) : Promise.resolve(undefined),
   ]);
   const instructions = renderContext({
     now,
+    profile: profile.status === "fulfilled" ? profile.value : undefined,
     memories: memories.status === "fulfilled" ? memories.value : undefined,
     digests: digests.status === "fulfilled" ? digests.value : [],
     older: older.status === "fulfilled" ? older.value : undefined,
   });
-  return { ...(instructions ? { instructions } : {}), historySince: since };
+  if (instructions && ctx.sessionId) saveContext(ctx, ctx.sessionId, instructions);
+  const home = profile.status === "fulfilled" ? profile.value.home_address : undefined;
+  return {
+    ...(instructions ? { instructions } : {}),
+    historySince: since,
+    // The household's address is the one "near me" and "the weather" mean, for the
+    // builtins too: it overrides whatever ?location= the client reported.
+    ...(home ? { location: home } : {}),
+  };
+}
+
+/**
+ * Keep what this session was told, for the page to show (GET /api/context). Not
+ * awaited: the connect must not wait on a write, and a lost row costs only the view.
+ */
+function saveContext(
+  ctx: Ctx & { clientId?: string | undefined },
+  sessionId: string,
+  text: string,
+) {
+  rest(ctx, "/session_contexts?on_conflict=session_id", {
+    method: "POST",
+    prefer: "resolution=merge-duplicates,return=minimal",
+    body: { session_id: sessionId, client_id: ctx.clientId ?? null, instructions: text },
+  }).catch((err: unknown) => console.warn(`session context not saved: ${String(err)}`));
 }
 
 async function recentDigests(ctx: Ctx, clientId: string, before: number): Promise<Digest[]> {
@@ -61,11 +90,14 @@ async function olderHistory(ctx: Ctx, clientId: string): Promise<string | undefi
 /** The block itself, pure so it is testable: undefined when there is nothing to say. */
 export function renderContext(parts: {
   now: Date;
+  profile?: Profile | undefined;
   memories: readonly Memory[] | undefined;
   digests: readonly Digest[];
   older: string | undefined;
 }): string | undefined {
   const sections: string[] = [];
+  const about = parts.profile ? describeProfile(parts.profile) : "";
+  if (about) sections.push(`## The household\n${about}`);
   if (parts.memories === undefined) {
     sections.push(
       "## What you remember about this household\n" +

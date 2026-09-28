@@ -120,7 +120,7 @@ export const MAX_CODES_PER_DAY = 5;
 export const CODE_TTL_MS = 10 * 60 * 1000;
 const MAX_ATTEMPTS = 5;
 
-async function sha256(text: string): Promise<string> {
+export async function sha256(text: string): Promise<string> {
   const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
   return Array.from(new Uint8Array(bytes), (b) => b.toString(16).padStart(2, "0")).join("");
 }

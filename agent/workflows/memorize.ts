@@ -44,13 +44,20 @@ export async function memorizeFlow(input: MemorizeInput, ctx: WorkflowContext) {
   return { turns: turns.messages.length, folded };
 }
 
-type Turns = { startedAt: string; messages: Message[] };
+/**
+ * A session's turns past its watermark. `digestSoFar` is what an earlier run digested of
+ * it: a resumed session is memorized once per hang-up, and each run sees only the new
+ * turns, so the digest is EXTENDED from it rather than replaced (a replaced one kept only
+ * the last few turns of a session that covered five things).
+ */
+type Turns = { startedAt: string; messages: Message[]; digestSoFar?: string };
 
 /** The session's spoken turns past what an earlier run already digested. */
 async function newTurns({ clientId, sessionId }: MemorizeInput): Promise<Turns> {
-  const held = await rest<{ through_event: number }[]>(
+  const held = await rest<{ through_event: number; digest: string }[]>(
     env(),
-    `/conversation_digests?client_id=eq.${enc(clientId)}&session_id=eq.${enc(sessionId)}&select=through_event`,
+    `/conversation_digests?client_id=eq.${enc(clientId)}&session_id=eq.${enc(sessionId)}` +
+      "&select=through_event,digest",
   );
   const after = held[0]?.through_event;
   const { sessions } = await stepClientTranscript(clientId, {
@@ -60,7 +67,11 @@ async function newTurns({ clientId, sessionId }: MemorizeInput): Promise<Turns> 
   const messages = (session?.messages ?? [])
     .filter((m) => (m.role === "user" || m.role === "assistant") && m.text.trim())
     .map((m) => ({ role: m.role as Message["role"], content: m.text }));
-  return { startedAt: new Date(session?.startedAt ?? Date.now()).toISOString(), messages };
+  return {
+    startedAt: new Date(session?.startedAt ?? Date.now()).toISOString(),
+    messages,
+    ...(held[0]?.digest ? { digestSoFar: held[0].digest } : {}),
+  };
 }
 
 /** Hand the turns to mem0 and wait for its extraction, so a FAILED one is retried here. */
@@ -86,10 +97,23 @@ async function writeDigest(input: MemorizeInput, turns: Turns): Promise<void> {
   const transcript = turns.messages
     .map((m) => `${m.role === "user" ? "Them" : "Assistant"}: ${m.content}`)
     .join("\n");
-  const { digest } = await stepGenerateJsonOrFail(`Started: ${turns.startedAt}\n\n${transcript}`, {
-    system: DIGEST_SYSTEM,
-    schema: DigestReply,
+  const soFar = turns.digestSoFar ? `Digest so far:\n${turns.digestSoFar}\n\nThen:\n` : "";
+  // Local time, zone named: the agent runs in the home, and times said in the
+  // conversation ("at 4:15") are local. Given UTC, the model called a reminder due at
+  // 4:14 PM "inconsistent with the conversation start time".
+  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const local = new Date(turns.startedAt).toLocaleString("en-US", {
+    timeZone: zone,
+    dateStyle: "full",
+    timeStyle: "short",
   });
+  const { digest } = await stepGenerateJsonOrFail(
+    `Started: ${local} (${zone})\n\n${soFar}${transcript}`,
+    {
+      system: DIGEST_SYSTEM,
+      schema: DigestReply,
+    },
+  );
   await rest(env(), "/conversation_digests?on_conflict=client_id,session_id", {
     method: "POST",
     prefer: "resolution=merge-duplicates",

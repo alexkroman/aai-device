@@ -75,6 +75,7 @@ describe("quickstart-agent template", () => {
       "confirm_phone",
       "deep_research",
       "forget",
+      "link_browser",
       "pollen",
       "recall",
       "remember",

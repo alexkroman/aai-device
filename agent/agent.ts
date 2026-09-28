@@ -1,6 +1,7 @@
 import { agent } from "@alexkroman1/aai";
 import { assemblyAIStt } from "@alexkroman1/aai/stt";
 import { sessionContext } from "./context.ts";
+import { routes } from "./routes.ts";
 import { memorize, remind, research } from "./shared.ts";
 
 // The whole agent: this file and `system-prompt.md` beside it, which is found
@@ -54,7 +55,11 @@ export default agent({
   // Every connect of a speaker (its ?client= id) is ONE long conversation: the SDK
   // replays the last few hours verbatim, and this adds everything older, compacted, plus
   // all that mem0 holds about the household (context.ts). Fixed for the session.
-  sessionContext: ({ clientId, env, signal }) => sessionContext({ clientId, env, signal }),
+  sessionContext: ({ sessionId, clientId, env, signal }) =>
+    sessionContext({ sessionId, clientId, env, signal }),
+  // The page's sidebar: profile, memories, context, sessions, running tasks, linking
+  // (routes.ts), served under /api.
+  routes,
   // Keyed by session AND watermark: a session resumed and hung up again is memorized from
   // where the last run stopped, and a repeated end is the same run.
   onSessionEnd: async ({ sessionId, clientId, workflows, lastEventIndex }) => {

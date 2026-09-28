@@ -19,7 +19,9 @@ export const DIGEST_SYSTEM = [
   "- What was asked, and what the assistant answered or did. From a tool result keep only",
   '  what the reply used ("forecast Sat: rain, 12C"), never raw data, URLs or lists.',
   '- Anything left unresolved: a question not answered, "ask me later", something the',
-  "  assistant said it would do. Start each with OPEN:.",
+  "  assistant said it would do. Start each with OPEN:. NOT a reminder it set or research",
+  "  it started with a tool: those are tracked as runs and shown from there, and an OPEN:",
+  "  line for one goes stale the moment the run finishes.",
   "- A correction they made to the assistant, quoted exactly.",
   '- Turn every relative time into an absolute one from the start time: "tomorrow" is',
   "  a date.",
@@ -29,6 +31,10 @@ export const DIGEST_SYSTEM = [
   "  the people or pets (those are remembered elsewhere).",
   "- Do not infer or invent. If a line looks misheard, say so briefly.",
   "`digest` is an empty string when nothing worth carrying forward happened.",
+  "",
+  "When a digest so far is given, the transcript CONTINUES that conversation: return the",
+  "digest of the whole of it, keeping what the digest so far says unless the new turns",
+  "resolve or correct it (an OPEN: item they settled is no longer open).",
 ].join("\n");
 
 /** Old digests (and the summary before them) into one rolling summary. */

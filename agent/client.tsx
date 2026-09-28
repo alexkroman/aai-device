@@ -14,9 +14,8 @@ mountClient({
   component: App,
   name: "Home Speaker",
   onSessionId: setSessionId,
-  // What the device sends as ?location= (CONFIG_AAI_DEVICE_ADDRESS), and where text_me
-  // and deep research text a browser session. Both are read on every connect.
-  location: () => readSetting("location") || undefined,
+  // Where text_me and deep research text a browser session, read on every connect. No
+  // ?location=: the household profile's address is the one everything uses (context.ts).
   phone: () => readSetting("phone") || undefined,
   // The device's ?client=: what lets a reminder or a finished research job find this page
   // again after the session ends (ui/inbox.ts holds the socket it arrives on).

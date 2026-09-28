@@ -45,3 +45,16 @@ test("says memory is unreachable rather than presenting an empty one", () => {
 test("nothing to say is no block at all", () => {
   expect(renderContext({ now, memories: [], digests: [], older: undefined })).toBeUndefined();
 });
+
+test("leads with the household profile, so the model knows the saved address", () => {
+  const text = renderContext({
+    now,
+    profile: { name: "Sam", home_address: "123 Main St, Springfield", phone: "+15555550123" },
+    memories: [],
+    digests: [],
+    older: undefined,
+  }) as string;
+  expect(text).toContain("Their home address is 123 Main St, Springfield.");
+  expect(text).toContain("ending in 0123");
+  expect(text).not.toContain("+15555550123");
+});

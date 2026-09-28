@@ -1,11 +1,9 @@
-// What this browser tells the agent about itself on every connect: the device's
-// CONFIG_AAI_DEVICE_ADDRESS (for "the weather" and "near me") and a phone for text_me and
-// deep research. Kept in this browser only, never in code; the speaker has its own.
+// What this browser tells the agent about itself on every connect: a phone for text_me
+// and deep research. Kept in this browser only, never in code; the speaker has its own.
 
-export type Setting = "location" | "phone";
+export type Setting = "phone";
 
 const KEY: Record<Setting, string> = {
-  location: "aai-device:location",
   phone: "aai-device:phone",
 };
 

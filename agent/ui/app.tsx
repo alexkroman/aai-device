@@ -1,7 +1,9 @@
 import { type FormEvent, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
-import { clearHistory, type Entry, type Item } from "./history.ts";
+import { browserId, clientId } from "./client-id.ts";
+import type { Entry, Item } from "./history.ts";
 import { Ring } from "./ring.tsx";
 import { readSetting, type Setting, writeSetting } from "./settings.ts";
+import { Sidebar } from "./sidebar.tsx";
 import { type Led, useDevice } from "./use-device.ts";
 
 // The speaker, on a page: its ring as a hold-to-talk button on one side, and on the other
@@ -21,7 +23,7 @@ export function App() {
 
   return (
     <main className="flex flex-col md:flex-row h-screen bg-aai-bg text-aai-text">
-      <section className="flex flex-col items-center justify-center gap-6 p-6 md:w-96 shrink-0 border-b md:border-b-0 md:border-r border-aai-border">
+      <section className="flex flex-col items-center gap-6 p-6 md:w-96 shrink-0 overflow-y-auto border-b md:border-b-0 md:border-r border-aai-border">
         <TalkButton
           led={device.led}
           talking={device.talking}
@@ -32,11 +34,6 @@ export function App() {
           {STATUS[device.led]}
         </p>
         <SettingField
-          setting="location"
-          label="Your address"
-          placeholder="e.g. 123 Main St, Springfield"
-        />
-        <SettingField
           setting="phone"
           label="Text me at (with the country code, e.g. +1)"
           placeholder="e.g. +1 555 555 0123"
@@ -45,6 +42,11 @@ export function App() {
         <p className="text-xs opacity-60" title="Reminders and research summaries come here">
           Speaker {device.clientId}: inbox {device.inboxUp ? "connected" : "offline"}
         </p>
+        <Sidebar
+          current={device.sessionId}
+          onContinue={device.continueSession}
+          endSession={device.endSession}
+        />
       </section>
 
       <section className="flex flex-col flex-1 min-h-0">
@@ -53,15 +55,17 @@ export function App() {
           <button
             type="button"
             className="text-xs opacity-60 hover:opacity-100"
-            onClick={() => {
-              clearHistory();
-              device.setHistory([]);
-            }}
+            title="Hang up for good: the conversation is compacted, as a speaker's is, and the next turn starts fresh"
+            onClick={device.newSession}
           >
-            Clear history
+            New session
           </button>
         </header>
-        <History entries={device.history}>
+        <History
+          entries={device.history}
+          current={device.sessionId}
+          onContinue={device.continueSession}
+        >
           {device.transcript.text && <Bubble from="user" text={device.transcript.text} live />}
           {device.streaming && <Bubble from="assistant" text={device.streaming} live />}
         </History>
@@ -157,7 +161,19 @@ function TalkButton({
   );
 }
 
-function History({ entries, children }: { entries: readonly Entry[]; children: ReactNode }) {
+function History({
+  entries,
+  current,
+  onContinue,
+  children,
+}: {
+  entries: readonly Entry[];
+  /** The session a turn goes to now. */
+  current: string | undefined;
+  /** Make an earlier session the one a turn goes to. */
+  onContinue: (sessionId: string) => void;
+  children: ReactNode;
+}) {
   const end = useRef<HTMLDivElement>(null);
   const last = entries.at(-1);
   // biome-ignore lint/correctness/useExhaustiveDependencies: scroll on any new content
@@ -179,7 +195,21 @@ function History({ entries, children }: { entries: readonly Entry[]; children: R
           </p>
         ) : (
           <div key={`s${entry.sessionId}${entry.at}`} className="flex flex-col gap-2">
-            <p className="text-xs text-center opacity-40">{clock(entry.at)}</p>
+            <p className="text-xs text-center opacity-40">
+              {clock(entry.at)}
+              {entry.sessionId === current ? (
+                <span className="ml-2 text-aai-primary">· current</span>
+              ) : (entry.clientId ?? browserId()) !== clientId() ? null : (
+                <button
+                  type="button"
+                  className="ml-2 underline hover:opacity-100"
+                  title="Type or talk to this conversation again"
+                  onClick={() => onContinue(entry.sessionId)}
+                >
+                  continue
+                </button>
+              )}
+            </p>
             {entry.items.map((item, i) => (
               // biome-ignore lint/suspicious/noArrayIndexKey: items are append-only within a session
               <Row key={i} item={item} />
@@ -196,7 +226,7 @@ function History({ entries, children }: { entries: readonly Entry[]; children: R
 function Row({ item }: { item: Item }) {
   if (item.kind === "message") return <Bubble from={item.role} text={item.text} />;
   return (
-    <p className="text-xs font-mono opacity-50 truncate">
+    <p className="text-xs font-mono opacity-50 whitespace-pre-wrap [overflow-wrap:anywhere]">
       {item.done ? "✓" : "…"} {item.name} {item.args === "{}" ? "" : item.args}
     </p>
   );

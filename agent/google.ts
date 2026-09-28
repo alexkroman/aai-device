@@ -38,7 +38,10 @@ export async function googleError(res: Response): Promise<string> {
 export type Geocoded = { latitude: number; longitude: number; formattedAddress: string };
 
 /** The best match for `query`, or a failure the model can read out. */
-export async function geocode(query: string, ctx: ToolContext): Promise<Geocoded | ToolFailure> {
+export async function geocode(
+  query: string,
+  ctx: Pick<ToolContext, "env"> & { signal?: AbortSignal },
+): Promise<Geocoded | ToolFailure> {
   const res = await fetch("https://places.googleapis.com/v1/places:searchText", {
     method: "POST",
     headers: {

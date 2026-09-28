@@ -17,7 +17,19 @@ export type Item =
 
 export type Entry =
   /** `run` tells apart two conversations the server held under one id; see recordSession. */
-  | { kind: "session"; sessionId: string; run?: number; at: number; items: Item[] }
+  | {
+      kind: "session";
+      sessionId: string;
+      run?: number;
+      at: number;
+      items: Item[];
+      /**
+       * Whose conversation it was: this browser's own, or the speaker it was linked to.
+       * Only a session of the page's CURRENT client can be continued from here; resuming
+       * one under another id would move it into that conversation.
+       */
+      clientId?: string;
+    }
   | { kind: "note"; at: number; text: string };
 
 /** Oldest dropped first; localStorage holds a few MB per origin. */
@@ -58,6 +70,7 @@ export function recordSession(
   sessionId: string,
   items: Item[],
   now: number,
+  clientId?: string,
 ): Entry[] {
   if (items.length === 0) return [...history];
   const mine = (e: Entry): e is SessionEntry => e.kind === "session" && e.sessionId === sessionId;
@@ -77,6 +90,7 @@ export function recordSession(
       run: chain.length > 0 ? run + 1 : 0,
       at: now,
       items,
+      ...(clientId ? { clientId } : {}),
     };
     return trim([...history, entry]);
   }
@@ -98,7 +112,10 @@ export function recordSession(
     next[tail] = { ...e, items: [...e.items, ...rest] };
     return next;
   }
-  return trim([...next, { kind: "session", sessionId, run, at: now, items: rest }]);
+  return trim([
+    ...next,
+    { kind: "session", sessionId, run, at: now, items: rest, ...(clientId ? { clientId } : {}) },
+  ]);
 }
 
 export function addNote(history: readonly Entry[], text: string, now: number): Entry[] {
@@ -124,8 +141,4 @@ export function saveHistory(history: readonly Entry[]): void {
   } catch {
     // Quota or private mode: the page still works, it just won't remember.
   }
-}
-
-export function clearHistory(): void {
-  localStorage.removeItem(STORAGE_KEY);
 }

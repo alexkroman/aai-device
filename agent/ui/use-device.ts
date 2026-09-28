@@ -1,16 +1,17 @@
 import { useConversation, useEvent, useSession } from "@alexkroman1/aai-ui";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { clientId } from "./client-id.ts";
+import { browserId, clientId } from "./client-id.ts";
 import { playPcm, stopCues, unlockAudio } from "./cues.ts";
 import {
   addNote,
   type Entry,
+  type Item,
   loadHistory,
   recordSession,
   saveHistory,
   toItems,
 } from "./history.ts";
-import { type Notice, openInbox } from "./inbox.ts";
+import { type LiveEvent, type Notice, openInbox } from "./inbox.ts";
 import { useSessionId } from "./session-id.ts";
 
 // firmware main.c, on top of the SDK's browser session:
@@ -60,7 +61,8 @@ export function useDevice() {
 
   // The live conversation IS the newest history entry; see recordSession.
   useEffect(() => {
-    if (sessionId) setHistory((h) => recordSession(h, sessionId, toItems(items), Date.now()));
+    if (sessionId)
+      setHistory((h) => recordSession(h, sessionId, toItems(items), Date.now(), clientId()));
   }, [sessionId, items]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: runs on each phase change
@@ -84,23 +86,72 @@ export function useDevice() {
   const [inboxUp, setInboxUp] = useState(false);
   const busy = useRef(false);
   busy.current = phase !== "idle";
+  // The live conversation of every OTHER session of this client: the speaker's, when
+  // this page is linked to one. The page's own session already shows itself.
+  const ownSession = useRef(sessionId);
+  ownSession.current = sessionId;
+  const mirrored = useRef(new Map<string, Item[]>());
+  const onEvent = useCallback((e: LiveEvent) => {
+    if (e.sessionId === ownSession.current) return;
+    const items = mirrored.current.get(e.sessionId) ?? [];
+    if (e.type === "session_ended") {
+      mirrored.current.delete(e.sessionId);
+      return;
+    }
+    const next = mirrorItem(e.event);
+    if (!next) return;
+    items.push(next);
+    mirrored.current.set(e.sessionId, items);
+    setHistory((h) => recordSession(h, e.sessionId, [...items], Date.now(), clientId()));
+  }, []);
   useEffect(
     () =>
       openInbox(clientId(), {
+        holder: browserId(),
         busy: () => busy.current,
         onOnline: setInboxUp,
+        onEvent,
         onNotice: (n) => {
           note(noticeText(n));
           playPcm(n.pcm);
         },
       }),
-    [note],
+    [note, onEvent],
   );
 
   const hangUp = useCallback(() => {
     pendingText.current = null;
     session.disconnect();
   }, [session]);
+
+  /**
+   * What a speaker does once its resume window has passed: end the session for good
+   * rather than park it. The server compacts it (onSessionEnd → workflows/memorize.ts)
+   * and the next turn opens a NEW session, which starts from that compacted history.
+   */
+  /**
+   * Make an earlier session the one the next turn goes to: the server resumes it by id,
+   * with its own turns and the speaker's history before it. Idle, it connects on the
+   * next turn as usual; the resume just names which conversation that is.
+   */
+  const continueSession = useCallback(
+    (id: string) => {
+      pendingText.current = null;
+      stopCues();
+      setTalking(false);
+      session.resume(id);
+      note("Continuing an earlier conversation");
+    },
+    [session, note],
+  );
+
+  const newSession = useCallback(() => {
+    pendingText.current = null;
+    stopCues();
+    setTalking(false);
+    session.end();
+    note("New session");
+  }, [session, note]);
 
   const connect = useCallback(() => {
     setFailed(false);
@@ -206,9 +257,31 @@ export function useDevice() {
     stopTalking,
     send,
     hangUp,
+    newSession,
+    continueSession,
+    endSession: session.end,
+    sessionId,
     clientId: clientId(),
     inboxUp,
   };
+}
+
+/** A history item for one mirrored event, or undefined for the ones not shown. */
+function mirrorItem(event: { type: string } & Record<string, unknown>): Item | undefined {
+  const text = typeof event.text === "string" ? event.text.trim() : "";
+  switch (event.type) {
+    case "user-transcript.committed":
+      return text ? { kind: "message", role: "user", text } : undefined;
+    case "agent-transcript.committed":
+      // A recovery phrase ("sorry, say that again") is the agent's filler, not a reply.
+      return text && !event.recovery ? { kind: "message", role: "assistant", text } : undefined;
+    case "tool.called":
+      return typeof event.toolName === "string"
+        ? { kind: "tool", name: event.toolName, args: JSON.stringify(event.args ?? {}), done: true }
+        : undefined;
+    default:
+      return undefined;
+  }
 }
 
 /** The history line for a notice: what it said, as the device logs it. */

@@ -70,11 +70,15 @@ describe("deep_research", () => {
     });
     const result = await runTool(deepResearch, { topic: "heat pumps for an old house" }, ctx);
     expect(result).toEqual({ started: true, delivery: "texted, and announced on the speaker" });
-    expect(start).toHaveBeenCalledWith(research, {
-      topic: "heat pumps for an old house",
-      clientId: "kitchen",
-      phone: "+15555550123",
-    });
+    expect(start).toHaveBeenCalledWith(
+      research,
+      {
+        topic: "heat pumps for an old house",
+        clientId: "kitchen",
+        phone: "+15555550123",
+      },
+      { key: "kitchen" },
+    );
   });
 
   test("from a browser tab there is no speaker to announce on, so it is only texted", async () => {

@@ -106,12 +106,50 @@ const RECONNECT_MIN_MS = 1000;
 const RECONNECT_MAX_MS = 30_000;
 
 /**
+ * The client's live conversation, as the server streams it to a holder that asked for
+ * events (`?events=1`): every session of the client, the speaker's included, so a linked
+ * page shows what is said to the speaker as it is said.
+ */
+export type LiveEvent =
+  | { type: "session_event"; sessionId: string; event: { type: string } & Record<string, unknown> }
+  | { type: "session_ended"; sessionId: string };
+
+/** A live-event frame, or undefined for anything else (a notice header, say). */
+export function parseLiveEvent(json: string): LiveEvent | undefined {
+  let msg: unknown;
+  try {
+    msg = JSON.parse(json);
+  } catch {
+    return;
+  }
+  if (typeof msg !== "object" || msg === null) return;
+  const m = msg as Record<string, unknown>;
+  if (typeof m.sessionId !== "string") return;
+  if (m.type === "session_ended") return { type: "session_ended", sessionId: m.sessionId };
+  const event = m.event as Record<string, unknown> | undefined;
+  if (m.type === "session_event" && event && typeof event.type === "string") {
+    return {
+      type: "session_event",
+      sessionId: m.sessionId,
+      event: event as { type: string } & Record<string, unknown>,
+    };
+  }
+}
+
+/**
  * Hold `WS /inbox?client=` open, reconnecting with backoff, as the device does from boot.
- * Returns the function that closes it for good.
+ * `holder` names THIS page among the client's holders, so a page joined to a speaker
+ * shares its inbox rather than displacing it. Returns the function that closes it for good.
  */
 export function openInbox(
   clientId: string,
-  opts: { busy: () => boolean; onNotice: (n: Notice) => void; onOnline?: (up: boolean) => void },
+  opts: {
+    holder: string;
+    busy: () => boolean;
+    onNotice: (n: Notice) => void;
+    onEvent?: (e: LiveEvent) => void;
+    onOnline?: (up: boolean) => void;
+  },
 ): () => void {
   let ws: WebSocket | undefined;
   let closed = false;
@@ -122,6 +160,8 @@ export function openInbox(
     const url = new URL("/inbox", location.href);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
     url.searchParams.set("client", clientId);
+    url.searchParams.set("holder", opts.holder);
+    if (opts.onEvent) url.searchParams.set("events", "1");
     const assembler = createAssembler(opts.busy);
     const socket = new WebSocket(url);
     socket.binaryType = "arraybuffer";
@@ -136,11 +176,13 @@ export function openInbox(
       opts.onOnline?.(true);
     };
     socket.onmessage = (e) => {
-      handle(
-        typeof e.data === "string"
-          ? assembler.text(e.data)
-          : assembler.bytes(new Uint8Array(e.data as ArrayBuffer)),
-      );
+      if (typeof e.data === "string") {
+        const live = opts.onEvent ? parseLiveEvent(e.data) : undefined;
+        if (live) opts.onEvent?.(live);
+        else handle(assembler.text(e.data));
+      } else {
+        handle(assembler.bytes(new Uint8Array(e.data as ArrayBuffer)));
+      }
     };
     socket.onclose = () => {
       opts.onOnline?.(false);

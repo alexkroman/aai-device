@@ -29,10 +29,13 @@ export const MEMORY_INCLUDES =
   "relationships, allergies and diets, routines, likes and dislikes, and things they " +
   "said they want remembered.";
 export const MEMORY_EXCLUDES =
-  "Health conditions of people, religion, politics, finances, passwords, codes and " +
-  "numbers read aloud (verification codes, PINs), statements by or about guests, " +
-  "one-off requests (weather, a search, a timer or reminder), passing moods, jokes and " +
-  "hypotheticals, and anything they asked not to be remembered.";
+  "Anything the assistant said, suggested or recommended (only what the people in the " +
+  "home said about themselves counts); their name, home address and phone number (the " +
+  "household profile holds those exactly); health conditions of people, religion, " +
+  "politics, finances, passwords, codes and numbers read aloud (verification codes, " +
+  "PINs), statements by or about guests, one-off requests and plans (the weather, a " +
+  "search, a reminder, going for a walk), passing moods, jokes and hypotheticals, and " +
+  "anything they asked not to be remembered.";
 
 function user(ctx: Ctx): string {
   return ctx.env.MEM0_USER_ID?.trim() || DEFAULT_MEM0_USER;
@@ -62,11 +65,18 @@ async function call<T>(ctx: Ctx, method: string, path: string, body?: unknown): 
 export function addMemories(
   ctx: Ctx,
   messages: readonly Message[],
-  opts: { metadata?: Record<string, string>; observedAt?: Date; timezone?: string } = {},
+  opts: {
+    metadata?: Record<string, string>;
+    observedAt?: Date;
+    timezone?: string;
+    /** false stores the text as written, with no extraction: a memory typed in the page. */
+    infer?: boolean;
+  } = {},
 ): Promise<{ event_id?: string; status?: string }> {
   return call(ctx, "POST", "/v3/memories/add/", {
     messages,
     user_id: user(ctx),
+    ...(opts.infer === false ? { infer: false } : {}),
     includes: MEMORY_INCLUDES,
     excludes: MEMORY_EXCLUDES,
     ...(opts.metadata ? { metadata: opts.metadata } : {}),
@@ -100,6 +110,11 @@ export async function searchMemories(ctx: Ctx, query: string, topK = 5): Promise
     top_k: topK,
   });
   return found.results ?? [];
+}
+
+/** Rewrite one memory's text: an edit made in the page. */
+export async function updateMemory(ctx: Ctx, id: string, text: string): Promise<void> {
+  await call(ctx, "PUT", `/v1/memories/${encodeURIComponent(id)}/`, { text });
 }
 
 /** Delete one memory by the id search or the profile gave it. */
