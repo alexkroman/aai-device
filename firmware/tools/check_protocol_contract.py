@@ -5,7 +5,10 @@ If the SDK renames one, the device silently stops reacting to it; this makes
 that a build failure instead.
 
 Custom events are a second contract, with this repo's own agent: each one the firmware
-matches must still be sent by a tool in agent/tools/ (ctx.send), with the fields it reads.
+matches must still be sent by a tool in agent/tools/ (ctx.send).
+
+The inbox (inbox.c, WS /inbox) is a third: its path, the notice header fields the firmware
+reads and the replies it sends must still be what the SDK's client inbox speaks.
 
 Usage: check_protocol_contract.py [path/to/aai/agent]   (default ~/Code/aai/agent)
 """
@@ -17,25 +20,38 @@ from pathlib import Path
 FW = Path(__file__).resolve().parent.parent
 SDK = Path(sys.argv[1] if len(sys.argv) > 1 else Path.home() / "Code/aai/agent")
 SDK_PROTOCOL = SDK / "packages/aai/src/sdk"
+SDK_RUNTIME = SDK / "packages/aai-runtime/src"
 AGENT_TOOLS = FW.parent / "agent/tools"
+DATA_FIELD_READ = r'cJSON_GetObjectItem\(cJSON_GetObjectItem\([^)]*\), "([^"]+)"\)'  # data.<field>
 
 
 def firmware_names() -> dict[str, set[str]]:
     protocol_c = (FW / "components/aai_device/protocol.c").read_text()
     agent_c = (FW / "components/aai_device/agent.c").read_text()
+    inbox_c = (FW / "components/aai_device/inbox.c").read_text()
+    notice_parser = protocol_c[protocol_c.index("bool proto_parse_notice(") :]
+    notice_parser = notice_parser[: notice_parser.index("\n}\n")]
+    session_c = protocol_c.replace(notice_parser, "")  # proto_parse() and the URL builders
     return {
         # server -> device event types, matched in proto_parse()
-        "event": set(re.findall(r'strcmp\(type, "([^"]+)"\)', protocol_c)),
+        "event": set(re.findall(r'strcmp\(type, "([^"]+)"\)', session_c)),
         # JSON fields read from events
-        "field": set(re.findall(r'cJSON_GetObjectItem\(msg, "([^"]+)"\)', protocol_c)),
+        "field": set(re.findall(r'cJSON_GetObjectItem\(msg, "([^"]+)"\)', session_c)),
         # device -> server command types and their fields
         "command": set(re.findall(r'\\"type\\":\\"([^\\]+)\\"', agent_c)),
         "command_field": set(re.findall(r'\\"(?!type\\")(\w+)\\":', agent_c)),
         # session URL query params
-        "url_param": set(re.findall(r"%s(\w+)=", protocol_c)),  # "%s%sresume=1" -> resume
-        # custom.emitted events from agent/tools/, and the fields read from their data
+        "url_param": set(re.findall(r"%s(\w+)=", protocol_c))  # "%s%sresume=1" -> resume
+        | set(re.findall(r'append_param\([^;]*?"(\w+)", \w+\)', protocol_c)),  # ..."client", id)
+        # the inbox: its path and query param, the notice fields read, the replies sent
+        "inbox_path": set(re.findall(r"(/\w+)\?client=", protocol_c)),
+        "notice_field": set(re.findall(r'cJSON_GetObjectItem\(msg, "([^"]+)"\)', notice_parser)),
+        # read from `data`: this repo's agent's convention, like the custom event fields
+        "notice_data_field": set(re.findall(DATA_FIELD_READ, notice_parser)),
+        "notice_reply": set(re.findall(r'reply\("(\w+)"', inbox_c)),
+        # custom.emitted events from agent/tools/. None reads fields from its data today
+        # ("stop" has none); check those against the tools too when one does.
         "custom_event": set(re.findall(r'strcmp\(event, "([^"]+)"\)', protocol_c)),
-        "custom_field": set(re.findall(r'cJSON_GetObjectItem\(data, "([^"]+)"\)', protocol_c)),
     }
 
 
@@ -51,15 +67,26 @@ def main() -> int:
     schemas = sdk_text("protocol-events.ts", "protocol.ts")
     commands = sdk_text("protocol-commands.ts")
     upgrade = sdk_text("ws-upgrade.ts")
+    notify = sdk_text("step-notify-client.ts")  # its module doc carries the wire format
+    inbox = (SDK_RUNTIME / "client-inbox.ts").read_text()
     tools = "\n".join(f.read_text() for f in sorted(AGENT_TOOLS.glob("*.ts")))
+    workflows = "\n".join(f.read_text() for f in sorted((AGENT_TOOLS.parent / "workflows").glob("*.ts")))
     checks = {
         "event": lambda n: re.search(rf'(ev|z\.literal)\("{re.escape(n)}"', events),
         "field": lambda n: n == "type" or re.search(rf"\b{re.escape(n)}\??:", schemas),
         "command": lambda n: re.search(rf'(cmd|z\.literal)\("{re.escape(n)}"', commands),
         "command_field": lambda n: re.search(rf"\b{re.escape(n)}\??:", commands),
         "url_param": lambda n: re.search(rf'"{re.escape(n)}"', upgrade),
+        "inbox_path": lambda n: re.search(rf'CLIENT_INBOX_PATH = "{re.escape(n)}"', inbox)
+        and re.search(r'get\("client"\)', inbox),
+        "notice_field": lambda n: (
+            re.search(rf'"{re.escape(n)}"', notify) or re.search(rf"\b{re.escape(n)}:", inbox)
+        ),
+        "notice_data_field": lambda n: re.search(
+            rf"stepNotifyClient\([^;]*data: \{{[^}}]*\b{re.escape(n)}\b", workflows
+        ),
+        "notice_reply": lambda n: re.search(rf'msg\.type === "{re.escape(n)}"', inbox),
         "custom_event": lambda n: re.search(rf'ctx\.send\(\s*"{re.escape(n)}"', tools),
-        "custom_field": lambda n: re.search(rf"\b{re.escape(n)}\b", tools),
     }
     missing = []
     for kind, names in firmware_names().items():

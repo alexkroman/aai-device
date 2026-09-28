@@ -1,5 +1,7 @@
 import { agent } from "@alexkroman1/aai";
 import { assemblyAIStt } from "@alexkroman1/aai/stt";
+import { sessionContext } from "./context.ts";
+import { memorize, remind, research } from "./shared.ts";
 
 // The whole agent: this file and `system-prompt.md` beside it, which is found
 // by WHERE IT SITS rather than imported.
@@ -28,8 +30,8 @@ export default agent({
   stt: assemblyAIStt({ voiceFocus: "off" }),
   // Host-side tools, enabled by name. Setting this REPLACES the default
   // (`["think"]`), so `think` is listed to keep it. `open_meteo`, `calculate`
-  // and `visit_webpage` are keyless; the other two read their keys from `.env`,
-  // as does the `text_link` tool in `tools/`.
+  // and `visit_webpage` are keyless; the rest read their keys from `.env`.
+  // `text_me` texts the browser's reported phone, else SMS_TO_PHONE, via Textbelt.
   // The device's `?location=` (CONFIG_AAI_DEVICE_ADDRESS) is what "near me"
   // and "the weather" default to.
   builtinTools: [
@@ -39,8 +41,37 @@ export default agent({
     "google_places",
     "calculate",
     "visit_webpage",
+    "text_me",
   ],
+  // Reminders (tools/remind_me.ts): a durable run per reminder that sleeps until it is due
+  // and pushes the spoken reminder to the speaker's inbox socket. Under `aai dev` without a
+  // DATABASE_URL a pending reminder lives only as long as the dev server.
+  // Deep research (tools/deep_research.ts): minutes of searching and reading, so a run
+  // that texts the report and announces a summary on the speaker when it is done.
+  // After-the-conversation memory (workflows/memorize.ts): the session's turns go to mem0,
+  // which keeps what lasts, and are digested into the speaker's compacted history.
+  workflows: { remind, research, memorize },
+  // Every connect of a speaker (its ?client= id) is ONE long conversation: the SDK
+  // replays the last few hours verbatim, and this adds everything older, compacted, plus
+  // all that mem0 holds about the household (context.ts). Fixed for the session.
+  sessionContext: ({ clientId, env, signal }) => sessionContext({ clientId, env, signal }),
+  // Keyed by session AND watermark: a session resumed and hung up again is memorized from
+  // where the last run stopped, and a repeated end is the same run.
+  onSessionEnd: async ({ sessionId, clientId, workflows, lastEventIndex }) => {
+    if (!clientId || lastEventIndex < 0) return;
+    await workflows.start(
+      memorize,
+      { clientId, sessionId, throughEvent: lastEventIndex },
+      { key: `${sessionId}:${lastEventIndex}` },
+    );
+  },
   // Declared so a deploy refuses to start without them rather than the tools
   // apologizing on every call.
-  requiredEnv: ["BRAVE_API_KEY", "GOOGLE_PLACES_API_KEY", "TEXTBELT_KEY", "SMS_TO_PHONE"],
+  requiredEnv: [
+    "BRAVE_API_KEY",
+    "GOOGLE_PLACES_API_KEY",
+    "TEXTBELT_KEY",
+    "SMS_TO_PHONE",
+    "MEM0_API_KEY",
+  ],
 });

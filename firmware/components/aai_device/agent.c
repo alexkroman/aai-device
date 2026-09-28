@@ -10,6 +10,7 @@
 #include "board.h"
 #include "cJSON.h"
 #include "esp_attr.h"
+#include "esp_crt_bundle.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -17,6 +18,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/stream_buffer.h"
 #include "freertos/task.h"
+#include "inbox.h"
 #include "lwip/sockets.h"
 #include "protocol.h"
 #include "resample.h"
@@ -26,7 +28,7 @@ static const char *TAG = "agent";
 
 #define MIC_BUF_BYTES  (2 * BOARD_SAMPLE_RATE * 2)  // 2 s pre-roll while connecting
 #define SPK_BUF_BYTES  (8 * BOARD_SAMPLE_RATE * 2)  // server paces ~1.5 s ahead
-#define CUE_BUF_BYTES  (BOARD_SAMPLE_RATE * 2)      // 1 s of local cues (the alarm is 720 ms)
+#define CUE_BUF_BYTES  (BOARD_SAMPLE_RATE * 2)      // 1 s of local cues
 #define SEND_CHUNK     512                          // samples, 32 ms @ 16 kHz
 #define WS_BUFFER_SIZE 4096
 // esp_websocket_client ABORTS the connection when a send times out, so this is not a
@@ -44,6 +46,8 @@ static const char *TAG = "agent";
 #define AMP_WARMUP_MS 150
 // How long after the last sample the speaker still counts as busy (DMA drain + room echo).
 #define SPEAKER_TAIL_US (200 * 1000)
+// A notice waits this long for room in the speaker buffer before giving up on a chunk.
+#define NOTICE_SEND_TIMEOUT_MS 3000
 
 static esp_websocket_client_handle_t s_ws;
 static StreamBufferHandle_t s_mic_sb;
@@ -55,7 +59,6 @@ static StreamBufferHandle_t s_spk_sb, s_cue_sb;
 static atomic_bool s_active;      // session open (mic audio accepted)
 static atomic_bool s_configured;  // session.configured received
 static atomic_bool s_flush;       // player should drop the buffered reply
-static atomic_bool s_flush_cues;  // ... and the queued cues (the alarm was stopped)
 // Cancels sent whose reply.cancelled hasn't arrived. Reply audio arriving meanwhile is the
 // interrupted reply's tail, already on the wire, and is dropped. The server answers every
 // cancel with reply.cancelled, in order on this socket, so the count always drains.
@@ -258,13 +261,6 @@ static void on_event(const char *json, size_t len)
             aai_events_post(AAI_EVENT_SESSION_CLOSED, NULL, 0);
         }
         break;
-    case PROTO_TIMER_SET:
-    case PROTO_TIMER_CANCEL: {
-        aai_timer_cmd_t cmd = {.seconds = msg.seconds};
-        strlcpy(cmd.label, msg.text, sizeof(cmd.label));
-        aai_events_post(msg.type == PROTO_TIMER_SET ? AAI_EVENT_TIMER_SET : AAI_EVENT_TIMER_CANCEL, &cmd, sizeof(cmd));
-        break;
-    }
     case PROTO_STOP:  // acted on in main.c, via AAI_EVENT_MESSAGE
         ESP_LOGI(TAG, "stop requested");
         break;
@@ -392,9 +388,6 @@ static void player_task(void *arg)
                 ESP_LOGW(TAG, "flush deferred: buffer busy");  // retried next loop
             }
         }
-        if (s_flush_cues && xStreamBufferReset(s_cue_sb) == pdPASS) {  // else retried next loop
-            s_flush_cues = false;
-        }
         if (s_amp_hold && !amp_on) {
             amp_up();
             amp_on = true;
@@ -447,7 +440,7 @@ static void player_task(void *arg)
             }
             // Poll only while something above is pending (a deadline, a deferred flush);
             // otherwise sleep until wake_player().
-            bool pending = s_flush || s_flush_cues || burst_start || (amp_on && !s_amp_hold);
+            bool pending = s_flush || burst_start || (amp_on && !s_amp_hold);
             ulTaskNotifyTake(pdTRUE, pending ? pdMS_TO_TICKS(20) : portMAX_DELAY);
         }
     }
@@ -483,6 +476,8 @@ void agent_init(void)
         .task_prio = 8,
         .disable_auto_reconnect = true,
         .network_timeout_ms = 5000,
+        // Verify wss:// servers against IDF's bundled root CAs; ignored for ws://.
+        .crt_bundle_attach = esp_crt_bundle_attach,
     };
     s_ws = esp_websocket_client_init(&cfg);
     esp_websocket_register_events(s_ws, WEBSOCKET_EVENT_ANY, ws_handler, NULL);
@@ -500,9 +495,11 @@ void agent_start(void)
     }
     const char *sid = resume ? s_session_id : NULL;
     // An address too long for the buffer costs only "near me", never the connection.
-    if (!proto_session_url(CONFIG_AAI_AGENT_URL, sid, CONFIG_AAI_DEVICE_ADDRESS, uri, sizeof(uri))) {
+    // ?client= is how a tool finds this device again later (inbox.h).
+    const char *client = inbox_client_id();
+    if (!proto_session_url(CONFIG_AAI_AGENT_URL, sid, client, CONFIG_AAI_DEVICE_ADDRESS, uri, sizeof(uri))) {
         ESP_LOGW(TAG, "device address too long for the session URL; connecting without it");
-        proto_session_url(CONFIG_AAI_AGENT_URL, sid, NULL, uri, sizeof(uri));
+        proto_session_url(CONFIG_AAI_AGENT_URL, sid, client, NULL, uri, sizeof(uri));
     }
     // Not `uri`: it carries the device's street address.
     ESP_LOGI(TAG, "connecting to %s%s (internal heap free %u, largest block %u)", CONFIG_AAI_AGENT_URL,
@@ -567,45 +564,32 @@ void agent_cancel(void)
 // BOARD_SAMPLE_RATE, and scaled once at init:
 // - Wake chime: Blurt's rom1a-6 start cue. It peaks near full scale; scaled to about the
 //   level of the old 880 Hz beep (peak 6000) so the wake cue isn't a jump in loudness.
-// - Timer alarm: Blurt's juno-78 start cue, a rising synth sweep, three times in a row per
-//   ring. Louder than the chime: it has to carry across the room.
 extern const uint8_t _binary_wake_chime_pcm_start[], _binary_wake_chime_pcm_end[];
-extern const uint8_t _binary_timer_alarm_pcm_start[], _binary_timer_alarm_pcm_end[];
 #define CHIME_GAIN_Q15 11000  // ~0.34
-#define ALARM_GAIN_Q15 20000  // ~0.61; the cue itself peaks at 0.8
-#define ALARM_HITS     3
-#define ALARM_GAP_MS   60
 
 typedef struct {
     int16_t *pcm;
     size_t bytes;
 } cue_t;
 
-static cue_t s_chime, s_alarm;
+static cue_t s_chime;
 
-// `repeat` gain-scaled copies of one embedded blob, `gap_ms` of silence apart.
-static cue_t cue_load(const uint8_t *start, const uint8_t *end, int gain_q15, int repeat, int gap_ms)
+// A gain-scaled copy of one embedded blob.
+static cue_t cue_load(const uint8_t *start, const uint8_t *end, int gain_q15)
 {
     const int16_t *src = (const int16_t *)start;
     // Linker symbols bounding one blob; as addresses, since they are two C objects.
     size_t n = ((uintptr_t)end - (uintptr_t)start) / sizeof(int16_t);
-    size_t gap = (size_t)BOARD_SAMPLE_RATE * gap_ms / 1000;
-    size_t total = repeat * n + (repeat - 1) * gap;
-    int16_t *pcm = heap_caps_calloc(total, sizeof(int16_t), MALLOC_CAP_SPIRAM);
-    for (int r = 0; r < repeat; r++) {
-        int16_t *dst = pcm + r * (n + gap);
-        for (size_t i = 0; i < n; i++) {
-            dst[i] = (int16_t)((src[i] * gain_q15) >> 15);
-        }
+    int16_t *pcm = heap_caps_calloc(n, sizeof(int16_t), MALLOC_CAP_SPIRAM);
+    for (size_t i = 0; i < n; i++) {
+        pcm[i] = (int16_t)((src[i] * gain_q15) >> 15);
     }
-    return (cue_t){pcm, total * sizeof(int16_t)};
+    return (cue_t){pcm, n * sizeof(int16_t)};
 }
 
 static void cues_init(void)
 {
-    s_chime = cue_load(_binary_wake_chime_pcm_start, _binary_wake_chime_pcm_end, CHIME_GAIN_Q15, 1, 0);
-    s_alarm =
-        cue_load(_binary_timer_alarm_pcm_start, _binary_timer_alarm_pcm_end, ALARM_GAIN_Q15, ALARM_HITS, ALARM_GAP_MS);
+    s_chime = cue_load(_binary_wake_chime_pcm_start, _binary_wake_chime_pcm_end, CHIME_GAIN_Q15);
 }
 
 static void play_cue(const cue_t *cue)
@@ -615,14 +599,6 @@ static void play_cue(const cue_t *cue)
 }
 
 void agent_play_chime(void) { play_cue(&s_chime); }
-
-void agent_play_alarm(void) { play_cue(&s_alarm); }
-
-void agent_stop_cues(void)
-{
-    s_flush_cues = true;
-    wake_player();
-}
 
 void agent_play_tone(int freq_hz, int ms)
 {
@@ -639,6 +615,29 @@ void agent_play_tone(int freq_hz, int ms)
         xStreamBufferSend(s_spk_sb, buf, chunk * 2, pdMS_TO_TICKS(100));
         wake_player();
     }
+}
+
+bool agent_play_notice(const uint8_t *data, size_t len, bool start)
+{
+    // Pairs bytes across frames like on_audio(); the inbox task is the only caller.
+    EXT_RAM_BSS_ATTR static int16_t pcm[2048 / 2 + 1];
+    static pcm_aligner_t aligner;
+    if (start) {
+        aligner = (pcm_aligner_t){0};
+    }
+    for (size_t pos = 0; pos < len;) {
+        size_t chunk = len - pos < 2048 ? len - pos : 2048;
+        size_t n = pcm_align(&aligner, data + pos, chunk, pcm);
+        pos += chunk;
+        // Blocks while the player catches up: the notice is pushed faster than it plays,
+        // and holding the inbox task here is what slows the socket down (TCP backpressure).
+        size_t sent = xStreamBufferSend(s_spk_sb, pcm, n * 2, pdMS_TO_TICKS(NOTICE_SEND_TIMEOUT_MS));
+        wake_player();
+        if (sent != n * 2) {
+            return false;  // the player stalled or was flushed mid-send; drop the rest
+        }
+    }
+    return true;
 }
 
 bool agent_talking(void)

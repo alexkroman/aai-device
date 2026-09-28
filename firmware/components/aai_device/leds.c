@@ -17,7 +17,7 @@ static unsigned s_spin_pos;
 static const uint8_t k_colors[][3] = {
     [LEDS_OFF] = {0, 0, 0},        [LEDS_BOOTING] = {24, 24, 24}, [LEDS_CONNECTING] = {8, 8, 8},
     [LEDS_LISTENING] = {0, 0, 40}, [LEDS_THINKING] = {28, 0, 40}, [LEDS_SPEAKING] = {0, 30, 30},
-    [LEDS_ERROR] = {40, 0, 0},     [LEDS_ALARM] = {48, 16, 0},
+    [LEDS_ERROR] = {40, 0, 0},
 };
 
 static void fill(const uint8_t rgb[3])
@@ -29,7 +29,7 @@ static void fill(const uint8_t rgb[3])
 }
 
 // States shown as a comet chasing around the ring, in the state's color.
-static bool spins(leds_state_t state) { return state == LEDS_BOOTING || state == LEDS_THINKING || state == LEDS_ALARM; }
+static bool spins(leds_state_t state) { return state == LEDS_BOOTING || state == LEDS_THINKING; }
 
 static void spin_step(void *arg)
 {

@@ -19,21 +19,41 @@ const texts = (h: Entry[]) =>
 
 test("a resume replaying the history does not log it twice, and keeps the order", () => {
   let h = recordSession([], "s1", [user("hi"), agent("hello")], 1);
-  h = addNote(h, "Timer done", 2);
+  h = addNote(h, "Reminder: call the plumber", 2);
   // Reconnected with ?sessionId=s1: history.restored, then a new turn and its reply.
   h = recordSession(h, "s1", [user("hi"), agent("hello")], 3);
   h = recordSession(h, "s1", [user("hi"), agent("hello"), user("and now?")], 4);
   h = recordSession(h, "s1", [user("hi"), agent("hello"), user("and now?"), agent("now this")], 5);
-  expect(texts(h)).toEqual([["hi", "hello"], "Timer done", ["and now?", "now this"]]);
+  expect(texts(h)).toEqual([
+    ["hi", "hello"],
+    "Reminder: call the plumber",
+    ["and now?", "now this"],
+  ]);
 });
 
 test("a tool call finishing early in a chain updates it where it is", () => {
-  const pending: Item = { kind: "tool", name: "set_timer", args: "{}", done: false };
+  const pending: Item = { kind: "tool", name: "remind_me", args: "{}", done: false };
   let h = recordSession([], "s1", [pending], 1);
   h = addNote(h, "note", 2);
   h = recordSession(h, "s1", [{ ...pending, done: true }, agent("Set.")], 3);
   expect(h[0]).toMatchObject({ items: [{ ...pending, done: true }] });
-  expect(texts(h)).toEqual([["set_timer"], "note", ["Set."]]);
+  expect(texts(h)).toEqual([["remind_me"], "note", ["Set."]]);
+});
+
+test("a session the server lost comes back greeting: a new run, not a swallowed replay", () => {
+  const hi = agent("Hi, what can I do for you?");
+  let h = recordSession(
+    [],
+    "s1",
+    [hi, user("remind me at five"), agent("Done."), user("thanks")],
+    1,
+  );
+  // Same id, fresh server: the greeting again, then a different conversation.
+  h = recordSession(h, "s1", [hi, user("pancakes?")], 2);
+  expect(texts(h)).toEqual([
+    ["Hi, what can I do for you?", "remind me at five", "Done.", "thanks"],
+    ["Hi, what can I do for you?", "pancakes?"],
+  ]);
 });
 
 test("a partial replay mid-reconnect changes nothing", () => {
@@ -52,9 +72,9 @@ test("a retired session back under the same id starts a new entry instead of wip
 });
 
 test("a tool call finishing is the same session", () => {
-  const pending: Item = { kind: "tool", name: "set_timer", args: '{"seconds":60}', done: false };
+  const pending: Item = { kind: "tool", name: "remind_me", args: '{"in_seconds":60}', done: false };
   let h = recordSession([], "s1", [pending], 1);
-  h = recordSession(h, "s1", [{ ...pending, done: true }, agent("Timer set.")], 2);
+  h = recordSession(h, "s1", [{ ...pending, done: true }, agent("Okay, at 5 PM.")], 2);
   expect(h).toHaveLength(1);
 });
 

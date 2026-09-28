@@ -1,16 +1,10 @@
-import alarmUrl from "../../firmware/components/aai_device/sounds/timer_alarm.pcm?url";
+// What the page plays besides the agent's own voice: notices from the inbox (ui/inbox.ts),
+// at the rate the firmware plays them. (The device's wake chime has no place here: this
+// page has no wake word.)
 
-// The device's timer alarm, from the same file the firmware embeds (CMakeLists.txt
-// EMBED_FILES), at the same gain and repeat pattern as firmware agent.c cue_load().
-// (Its other cue, the wake chime, has no place here: this page has no wake word.)
-
-const SAMPLE_RATE = 16_000; // firmware BOARD_SAMPLE_RATE; the files are PCM16LE mono at it
-const ALARM_GAIN = 20_000 / 32_768;
-const ALARM_HITS = 3;
-const ALARM_GAP_S = 0.06;
+const SAMPLE_RATE = 16_000; // firmware BOARD_SAMPLE_RATE; notices are PCM16LE mono at it
 
 let ctx: AudioContext | undefined;
-const buffers = new Map<string, Promise<AudioBuffer>>();
 const playing = new Set<AudioBufferSourceNode>();
 
 function audio(): AudioContext {
@@ -20,51 +14,30 @@ function audio(): AudioContext {
 }
 
 /**
- * Call from a press or a keystroke. A timer rings long after any gesture, and an
+ * Call from a press or a keystroke. A reminder arrives long after any gesture, and an
  * AudioContext first made then stays suspended under the autoplay policy: silent.
  */
 export function unlockAudio(): void {
   audio();
 }
 
-function load(url: string): Promise<AudioBuffer> {
-  let buffer = buffers.get(url);
-  if (!buffer) {
-    buffer = fetch(url)
-      .then((res) => res.arrayBuffer())
-      .then((bytes) => {
-        const pcm = new Int16Array(bytes);
-        const out = audio().createBuffer(1, pcm.length, SAMPLE_RATE);
-        const samples = out.getChannelData(0);
-        for (let i = 0; i < pcm.length; i++) samples[i] = (pcm[i] ?? 0) / 32_768;
-        return out;
-      });
-    buffers.set(url, buffer);
-  }
-  return buffer;
-}
-
-async function play(url: string, gain: number, hits = 1, gapS = 0): Promise<void> {
+/** A notice from the inbox (ui/inbox.ts): PCM16LE mono at SAMPLE_RATE, as the device plays it. */
+export function playPcm(bytes: Uint8Array): void {
   const ac = audio();
-  const buffer = await load(url);
-  const level = ac.createGain();
-  level.gain.value = gain;
-  level.connect(ac.destination);
-  let at = ac.currentTime;
-  for (let i = 0; i < hits; i++) {
-    const src = ac.createBufferSource();
-    src.buffer = buffer;
-    src.connect(level);
-    src.onended = () => playing.delete(src);
-    playing.add(src);
-    src.start(at);
-    at += buffer.duration + gapS;
-  }
+  const pcm = new Int16Array(bytes.buffer, bytes.byteOffset, bytes.byteLength >> 1);
+  if (pcm.length === 0) return;
+  const buffer = ac.createBuffer(1, pcm.length, SAMPLE_RATE);
+  const samples = buffer.getChannelData(0);
+  for (let i = 0; i < pcm.length; i++) samples[i] = (pcm[i] ?? 0) / 32_768;
+  const src = ac.createBufferSource();
+  src.buffer = buffer;
+  src.connect(ac.destination);
+  src.onended = () => playing.delete(src);
+  playing.add(src);
+  src.start();
 }
 
-export const playAlarm = () => play(alarmUrl, ALARM_GAIN, ALARM_HITS, ALARM_GAP_S);
-
-/** firmware agent_stop_cues(): silence what is queued, e.g. the rest of a ring. */
+/** firmware inbox_stop_notice(): silence a notice that is playing. */
 export function stopCues(): void {
   for (const src of playing) src.stop();
   playing.clear();

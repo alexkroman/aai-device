@@ -1,6 +1,7 @@
 import { useConversation, useEvent, useSession } from "@alexkroman1/aai-ui";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { playAlarm, stopCues, unlockAudio } from "./cues.ts";
+import { clientId } from "./client-id.ts";
+import { playPcm, stopCues, unlockAudio } from "./cues.ts";
 import {
   addNote,
   type Entry,
@@ -9,8 +10,8 @@ import {
   saveHistory,
   toItems,
 } from "./history.ts";
+import { type Notice, openInbox } from "./inbox.ts";
 import { useSessionId } from "./session-id.ts";
-import { addTimer, cancelTimers, popDue, type Timer } from "./timers.ts";
 
 // firmware main.c, on top of the SDK's browser session:
 //
@@ -28,12 +29,10 @@ const FOLLOWUP_MS = 8000;
 const CONNECT_TIMEOUT_MS = 8000;
 const THINKING_TIMEOUT_MS = 60_000;
 const TICK_MS = 100;
-const RING_PERIOD_MS = 1500;
-const RING_MAX_MS = 60_000;
 
 export type Phase = "idle" | "connecting" | "active";
 /** firmware leds.h, minus BOOTING */
-export type Led = "off" | "connecting" | "listening" | "thinking" | "speaking" | "alarm" | "error";
+export type Led = "off" | "connecting" | "listening" | "thinking" | "speaking" | "error";
 
 export function useDevice() {
   const session = useSession();
@@ -47,22 +46,11 @@ export function useDevice() {
       : "active";
 
   const [history, setHistory] = useState<Entry[]>(loadHistory);
-  const [timers, setTimers] = useState<Timer[]>([]);
-  const [ringUntil, setRingUntil] = useState(0); // 0 = not ringing
   const [failed, setFailed] = useState(false);
   const [talking, setTalking] = useState(false);
   const pendingText = useRef<string | null>(null);
   const phaseSince = useRef(Date.now());
   const lastActivity = useRef(Date.now());
-  const nextRing = useRef(0);
-  // Events and the tick read the timers through this, so two events in one render
-  // each see the other's change.
-  const timersNow = useRef(timers);
-  timersNow.current = timers;
-  const updateTimers = (next: Timer[]) => {
-    timersNow.current = next;
-    setTimers(next);
-  };
 
   const note = useCallback((text: string) => setHistory((h) => addNote(h, text, Date.now())), []);
 
@@ -91,6 +79,24 @@ export function useDevice() {
     if (session.error) setFailed(true);
   }, [session.error]);
 
+  // inbox.c: held open from load, idle or not. Mid-conversation it answers "busy", as the
+  // device does, so a reminder never talks over a reply; the agent brings it back later.
+  const [inboxUp, setInboxUp] = useState(false);
+  const busy = useRef(false);
+  busy.current = phase !== "idle";
+  useEffect(
+    () =>
+      openInbox(clientId(), {
+        busy: () => busy.current,
+        onOnline: setInboxUp,
+        onNotice: (n) => {
+          note(noticeText(n));
+          playPcm(n.pcm);
+        },
+      }),
+    [note],
+  );
+
   const hangUp = useCallback(() => {
     pendingText.current = null;
     session.disconnect();
@@ -102,35 +108,19 @@ export function useDevice() {
     else session.start();
   }, [session]);
 
-  const ringing = ringUntil !== 0;
-
   // Muted until a hold: set before connect(), so a typed turn never opens the mic.
   useEffect(() => {
     session.setMicMuted(!talking);
   }, [session, talking]);
 
-  /** stop_ringing(), noted in the history when someone stopped it. */
-  const stopRinging = useCallback(
-    (why?: string) => {
-      setRingUntil(0);
-      stopCues();
-      if (why) note(why);
-    },
-    [note],
-  );
-
-  /** The button went down: stop an alarm, interrupt a reply, open the mic. */
+  /** The button went down: cut off a notice, interrupt a reply, open the mic. */
   const startTalking = useCallback(() => {
     unlockAudio();
-    if (ringing) {
-      // As on the device, a press while it rings only stops the alarm.
-      stopRinging("Alarm stopped");
-      return;
-    }
+    stopCues();
     if (phase === "idle") connect();
     else session.cancel();
     setTalking(true);
-  }, [ringing, phase, session, connect, stopRinging]);
+  }, [phase, session, connect]);
 
   /** The button came up: silence from here lets the agent end the turn. */
   const stopTalking = useCallback(() => {
@@ -144,7 +134,6 @@ export function useDevice() {
       const line = text.trim();
       if (!line) return;
       unlockAudio();
-      if (ringing) stopRinging("Alarm stopped");
       if (phase === "active") {
         session.sendText(line);
         return;
@@ -152,7 +141,7 @@ export function useDevice() {
       pendingText.current = line;
       if (phase === "idle") connect();
     },
-    [ringing, phase, session, connect, stopRinging],
+    [phase, session, connect],
   );
 
   useEffect(() => {
@@ -162,25 +151,10 @@ export function useDevice() {
     }
   }, [phase, session]);
 
-  // on_tick(): timers, the ring, and the two ways a session ends on its own.
+  // on_tick(): the two ways a session ends on its own.
   const tick = useRef<() => void>(() => {});
   tick.current = () => {
     const now = Date.now();
-    const { due, left } = popDue(timersNow.current, now);
-    if (due.length > 0) {
-      updateTimers(left);
-      for (const t of due) note(`Timer done${t.label ? `: ${t.label}` : ""}`);
-      setRingUntil(now + RING_MAX_MS);
-      nextRing.current = now;
-    }
-    if (ringing) {
-      if (now >= ringUntil) {
-        stopRinging("Alarm unanswered");
-      } else if (now >= nextRing.current) {
-        void playAlarm();
-        nextRing.current = now + RING_PERIOD_MS;
-      }
-    }
     if (phase === "connecting" && now - phaseSince.current > CONNECT_TIMEOUT_MS) {
       setFailed(true);
       hangUp();
@@ -194,28 +168,18 @@ export function useDevice() {
     return () => clearInterval(id);
   }, []);
 
-  // The three events the firmware parses out of custom.emitted (protocol.c).
-  useEvent<{ seconds: number; label?: string }>("timer.set", ({ seconds, label }) => {
-    const next = addTimer(timersNow.current, Date.now(), seconds, label);
-    if (next) updateTimers(next);
-    else note(`Timer dropped: ${timersNow.current.length} already running`);
-  });
-  useEvent<{ label?: string }>("timer.cancel", ({ label }) => {
-    updateTimers(cancelTimers(timersNow.current, label));
-  });
-  // stop_everything(): the model is still writing its follow-up to the stop call, so
-  // cancel it and hang up, and nothing it says after has anywhere to play.
+  // stop_everything(), the one event the firmware parses out of custom.emitted
+  // (protocol.c): the model is still writing its follow-up to the stop call, so cancel it
+  // and hang up, and nothing it says after has anywhere to play.
   useEvent("stop", () => {
-    updateTimers([]);
-    if (ringing) stopRinging("Alarm stopped");
+    stopCues();
     setTalking(false);
     session.cancel();
     hangUp();
   });
 
-  const led: Led = ringing
-    ? "alarm"
-    : phase === "connecting"
+  const led: Led =
+    phase === "connecting"
       ? "connecting"
       : phase === "idle"
         ? failed
@@ -232,8 +196,6 @@ export function useDevice() {
   return {
     phase,
     led,
-    ringing,
-    timers,
     history,
     setHistory,
     streaming,
@@ -244,5 +206,14 @@ export function useDevice() {
     stopTalking,
     send,
     hangUp,
+    clientId: clientId(),
+    inboxUp,
   };
+}
+
+/** The history line for a notice: what it said, as the device logs it. */
+function noticeText(n: Notice): string {
+  const text = n.data?.text ?? n.data?.topic;
+  const what = typeof text === "string" ? `: ${text}` : "";
+  return n.event === "reminder" ? `Reminder${what}` : `${n.event}${what}`;
 }

@@ -13,6 +13,9 @@ node_modules/
 # local workflow runs and uploads (written by `aai dev`)
 .workflow-data/
 
+# texts captured instead of sent (`make agent SMS=outbox`)
+.sms-outbox.jsonl
+
 # env files
 .env
 .env.*

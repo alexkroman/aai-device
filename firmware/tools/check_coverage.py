@@ -11,7 +11,6 @@ FLOORS = {"lines": 90.0, "branches": 85.0, "functions": 100.0}
 MODULES = (
     "components/aai_device/resample.c",
     "components/aai_device/protocol.c",
-    "components/aai_device/timers.c",
 )
 
 

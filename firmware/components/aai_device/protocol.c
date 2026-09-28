@@ -1,6 +1,7 @@
 #include "protocol.h"
 
 #include <ctype.h>
+#include <limits.h>
 #include <stdio.h>
 #include <string.h>
 #include "cJSON.h"
@@ -17,25 +18,11 @@ static int valid_rate(const cJSON *item, int fallback)
     return v >= 8000 && v <= 48000 && v == (double)(int)v ? (int)v : fallback;
 }
 
-static proto_type_t parse_custom(const cJSON *msg, proto_msg_t *out)
+static proto_type_t parse_custom(const cJSON *msg)
 {
     const char *event = cJSON_GetStringValue(cJSON_GetObjectItem(msg, "event"));
-    const cJSON *data = cJSON_GetObjectItem(msg, "data");
     if (!event) {
         return PROTO_OTHER;
-    }
-    if (strcmp(event, "timer.set") == 0) {
-        double s = cJSON_GetNumberValue(cJSON_GetObjectItem(data, "seconds"));  // NaN when missing
-        if (!(s >= 1 && s <= PROTO_TIMER_MAX_SECONDS)) {
-            return PROTO_OTHER;  // a timer we can't honor; the agent already said it's set
-        }
-        out->seconds = (int)s;
-        copy_str(out->text, sizeof(out->text), cJSON_GetObjectItem(data, "label"));
-        return PROTO_TIMER_SET;
-    }
-    if (strcmp(event, "timer.cancel") == 0) {
-        copy_str(out->text, sizeof(out->text), cJSON_GetObjectItem(data, "label"));
-        return PROTO_TIMER_CANCEL;
     }
     if (strcmp(event, "stop") == 0) {
         return PROTO_STOP;
@@ -79,7 +66,7 @@ bool proto_parse(const char *json, size_t len, proto_msg_t *out)
     } else if (strcmp(type, "session.timed-out") == 0) {
         out->type = PROTO_TIMED_OUT;
     } else if (strcmp(type, "custom.emitted") == 0) {
-        out->type = parse_custom(msg, out);
+        out->type = parse_custom(msg);
     } else {
         out->type = PROTO_OTHER;
     }
@@ -87,7 +74,35 @@ bool proto_parse(const char *json, size_t len, proto_msg_t *out)
     return true;
 }
 
-bool proto_session_url(const char *base, const char *session_id, const char *location, char *out, size_t out_len)
+// Appends `&key=value` with `value` percent-encoded (RFC 3986 unreserved kept).
+static bool append_param(char *out, size_t out_len, size_t *len, const char *key, const char *value)
+{
+    int n = snprintf(out + *len, out_len - *len, "&%s=", key);
+    if (n <= 0 || (size_t)n >= out_len - *len) {
+        return false;
+    }
+    *len += (size_t)n;
+    static const char hex[] = "0123456789ABCDEF";
+    for (const unsigned char *c = (const unsigned char *)value; *c; c++) {
+        bool plain = isalnum(*c) || *c == '-' || *c == '.' || *c == '_' || *c == '~';
+        size_t need = plain ? 1 : 3;
+        if (*len + need >= out_len) {
+            return false;
+        }
+        if (plain) {
+            out[(*len)++] = (char)*c;
+        } else {
+            out[(*len)++] = '%';
+            out[(*len)++] = hex[*c >> 4];
+            out[(*len)++] = hex[*c & 0xF];
+        }
+    }
+    out[*len] = '\0';
+    return true;
+}
+
+bool proto_session_url(const char *base, const char *session_id, const char *client_id, const char *location, char *out,
+                       size_t out_len)
 {
     const char *sep = strchr(base, '?') ? "&" : "?";
     int n = session_id && session_id[0] ? snprintf(out, out_len, "%s%ssessionId=%s", base, sep, session_id)
@@ -95,33 +110,67 @@ bool proto_session_url(const char *base, const char *session_id, const char *loc
     if (n <= 0 || (size_t)n >= out_len) {
         return false;
     }
-    if (!location || !location[0]) {
-        return true;
-    }
     size_t len = (size_t)n;
-    static const char key[] = "&location=";
-    if (len + sizeof(key) > out_len) {
+    if (client_id && client_id[0] && !append_param(out, out_len, &len, "client", client_id)) {
         return false;
     }
-    memcpy(out + len, key, sizeof(key));  // includes the NUL
-    len += sizeof(key) - 1;
-    static const char hex[] = "0123456789ABCDEF";
-    for (const unsigned char *c = (const unsigned char *)location; *c; c++) {
-        bool plain = isalnum(*c) || *c == '-' || *c == '.' || *c == '_' || *c == '~';
-        size_t need = plain ? 1 : 3;
-        if (len + need >= out_len) {
+    return !(location && location[0]) || append_param(out, out_len, &len, "location", location);
+}
+
+bool proto_valid_client_id(const char *id)
+{
+    size_t n = 0;
+    for (; id[n]; n++) {
+        if (!(isalnum((unsigned char)id[n]) || id[n] == '-' || id[n] == '_') || n >= 64) {
             return false;
         }
-        if (plain) {
-            out[len++] = (char)*c;
-        } else {
-            out[len++] = '%';
-            out[len++] = hex[*c >> 4];
-            out[len++] = hex[*c & 0xF];
-        }
     }
-    out[len] = '\0';
-    return true;
+    return n > 0;
+}
+
+bool proto_inbox_url(const char *agent_url, const char *client_id, char *out, size_t out_len)
+{
+    const char *scheme_end = strstr(agent_url, "://");
+    if (!scheme_end || !proto_valid_client_id(client_id)) {
+        return false;
+    }
+    const char *host = scheme_end + 3;
+    size_t host_len = strcspn(host, "/?#");
+    if (host_len == 0) {
+        return false;
+    }
+    int n = snprintf(out, out_len, "%.*s/inbox?client=%s", (int)(host + host_len - agent_url), agent_url, client_id);
+    return n > 0 && (size_t)n < out_len;
+}
+
+bool proto_parse_notice(const char *json, size_t len, proto_notice_t *out)
+{
+    memset(out, 0, sizeof(*out));
+    cJSON *msg = cJSON_ParseWithLength(json, len);
+    const char *type = cJSON_GetStringValue(cJSON_GetObjectItem(msg, "type"));
+    const char *id = cJSON_GetStringValue(cJSON_GetObjectItem(msg, "id"));
+    const char *event = cJSON_GetStringValue(cJSON_GetObjectItem(msg, "event"));
+    double bytes = cJSON_GetNumberValue(cJSON_GetObjectItem(msg, "bytes"));  // NaN when missing
+    bool ok = type && strcmp(type, "notice") == 0 && id && id[0] && strlen(id) <= PROTO_NOTICE_ID_MAX && event &&
+              bytes >= 0 && bytes <= PROTO_NOTICE_MAX_BYTES && bytes == (double)(size_t)bytes && (size_t)bytes % 2 == 0;
+    if (ok) {
+        snprintf(out->id, sizeof(out->id), "%s", id);
+        snprintf(out->event, sizeof(out->event), "%s", event);
+        copy_str(out->text, sizeof(out->text), cJSON_GetObjectItem(cJSON_GetObjectItem(msg, "data"), "text"));
+        out->bytes = (size_t)bytes;
+    }
+    cJSON_Delete(msg);
+    return ok;
+}
+
+bool proto_notice_reply(const char *type, const char *id, char *out, size_t out_len)
+{
+    // Built with cJSON, not snprintf: the id is the server's and gets escaped.
+    cJSON *reply = cJSON_CreateObject();
+    bool ok = reply && cJSON_AddStringToObject(reply, "type", type) && cJSON_AddStringToObject(reply, "id", id) &&
+              out_len <= INT_MAX && cJSON_PrintPreallocated(reply, out, (int)out_len, false);
+    cJSON_Delete(reply);
+    return ok;
 }
 
 size_t pcm_align(pcm_aligner_t *a, const uint8_t *data, size_t len, int16_t *out)

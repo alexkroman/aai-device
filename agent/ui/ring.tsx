@@ -15,10 +15,9 @@ const COLOR: Record<Led, string> = {
   listening: "#3b5bff",
   thinking: "#b300ff",
   speaking: "#00e5e5",
-  alarm: "#ff5500",
   error: "#ff2020",
 };
-const SPINS: ReadonlySet<Led> = new Set(["thinking", "alarm"]);
+const SPINS: ReadonlySet<Led> = new Set(["thinking"]);
 
 export function Ring({ led, size = 224 }: { led: Led; size?: number }) {
   const [head, setHead] = useState(0);

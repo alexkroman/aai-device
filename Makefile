@@ -16,7 +16,6 @@ SYSROOT   := --extra-arg=-isysroot$(shell xcrun --show-sdk-path 2>/dev/null)
 C_SOURCES := $(shell find $(FW)/main $(FW)/components $(FW)/test -name '*.[ch]' -not -path '*/build*' \
                -not -path '*/managed_components/*')
 UNIT_SRCS := $(FW)/components/aai_device/resample.c $(FW)/components/aai_device/protocol.c \
-             $(FW)/components/aai_device/timers.c \
              $(wildcard $(FW)/test/host/test_*.c)
 FUZZ_SRCS := $(wildcard $(FW)/test/fuzz/fuzz_*.c)
 FUZZ_SECS ?= 15
@@ -26,7 +25,7 @@ AAI_SDK   ?= $(HOME)/Code/aai/agent-builtin-api-tools
 
 .PHONY: check require-idf lint lint-format lint-tidy lint-cppcheck lint-python lint-agent \
         build-firmware test-host test-fuzz test-coverage check-contract check-size test-agent \
-        device-freshness test-device test-e2e format agent flash monitor
+        device-freshness test-device test-e2e format agent supabase flash monitor
 
 check: require-idf lint build-firmware test-host test-fuzz test-coverage check-contract check-size \
        test-agent device-freshness
@@ -113,7 +112,7 @@ test-coverage:
 	cd $(FW)/build-cov && for t in test_*; do LLVM_PROFILE_FILE=$$t.profraw ./$$t >/dev/null || exit 1; done
 	$(LLVM)/llvm-profdata merge -o $(FW)/build-cov/all.profdata $(FW)/build-cov/*.profraw
 	$(LLVM)/llvm-cov export -summary-only -instr-profile=$(FW)/build-cov/all.profdata \
-	  $(FW)/build-cov/test_resample -object $(FW)/build-cov/test_protocol -object $(FW)/build-cov/test_timers \
+	  $(FW)/build-cov/test_resample -object $(FW)/build-cov/test_protocol \
 	  > $(FW)/build-cov/summary.json
 	python3 $(FW)/tools/check_coverage.py $(FW)/build-cov/summary.json
 
@@ -146,9 +145,29 @@ format:
 # The CLI runs from source, but the SDK packages it and agent.ts import resolve to their
 # dist/ (the @dev/source condition is only on inside the SDK repo), so SDK edits are
 # invisible until built. Turbo rebuilds only what changed; a no-op run is well under a second.
+#
+# The local Supabase stack (supabase/: household profile, memories, durable workflow runs)
+# comes up first if it isn't already; up.sh prints its URL and keys for agent/.env's
+# declared names, so they always match the running stack.
+#
+# `make agent SMS=outbox` sends no texts: every one (text_me, deep research reports) is
+# appended to agent/.sms-outbox.jsonl instead (the SDK's AAI_CHANNEL_OUTBOX), addressed to
+# the fictional SMS_TO_PHONE, or to whatever the page's "Text me at" says (any
+# number: nothing is sent).
+SMS_OUTBOX := $(CURDIR)/agent/.sms-outbox.jsonl
+ifeq ($(SMS),outbox)
+agent: export AAI_CHANNEL_OUTBOX := $(SMS_OUTBOX)
+agent: export TEXTBELT_KEY := outbox
+agent: export SMS_TO_PHONE := +15555550100
+agent: export SMS_ALLOWED_PHONES := *
+endif
 agent:
 	cd $(AAI_SDK) && pnpm exec turbo run build --filter=@alexkroman1/aai-cli... --output-logs=errors-only
-	cd agent && AAI_DEV_HOST=0.0.0.0 node $(AAI_SDK)/packages/aai-cli/bin.mjs dev -p 3000
+	env="$$(supabase/up.sh)" && eval "$$env" && cd agent && AAI_DEV_HOST=0.0.0.0 node $(AAI_SDK)/packages/aai-cli/bin.mjs dev -p 3000
+
+# Start the stack on its own (Studio at http://127.0.0.1:55423). `supabase stop` stops it.
+supabase:
+	@supabase/up.sh >/dev/null
 
 flash: require-idf
 	cd $(FW) && idf.py build flash

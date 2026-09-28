@@ -1,8 +1,7 @@
 import { type FormEvent, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { clearHistory, type Entry, type Item } from "./history.ts";
-import { readLocation, writeLocation } from "./location.ts";
 import { Ring } from "./ring.tsx";
-import type { Timer } from "./timers.ts";
+import { readSetting, type Setting, writeSetting } from "./settings.ts";
 import { type Led, useDevice } from "./use-device.ts";
 
 // The speaker, on a page: its ring as a hold-to-talk button on one side, and on the other
@@ -14,7 +13,6 @@ const STATUS: Record<Led, string> = {
   listening: "Listening: let go when you’re done",
   thinking: "Thinking",
   speaking: "Speaking",
-  alarm: "Timer! Press the ring to stop it",
   error: "Couldn’t reach the agent",
 };
 
@@ -33,8 +31,20 @@ export function App() {
         <p className="text-sm text-center text-balance min-h-10 leading-relaxed" aria-live="polite">
           {STATUS[device.led]}
         </p>
-        <Timers timers={device.timers} />
-        <LocationField />
+        <SettingField
+          setting="location"
+          label="Your address"
+          placeholder="e.g. 123 Main St, Springfield"
+        />
+        <SettingField
+          setting="phone"
+          label="Text me at (with the country code, e.g. +1)"
+          placeholder="e.g. +1 555 555 0123"
+          type="tel"
+        />
+        <p className="text-xs opacity-60" title="Reminders and research summaries come here">
+          Speaker {device.clientId}: inbox {device.inboxUp ? "connected" : "offline"}
+        </p>
       </section>
 
       <section className="flex flex-col flex-1 min-h-0">
@@ -246,44 +256,30 @@ function Composer({ onSend }: { onSend: (text: string) => void }) {
   );
 }
 
-function Timers({ timers }: { timers: readonly Timer[] }) {
-  const [now, setNow] = useState(Date.now());
-  const running = timers.length > 0;
-  useEffect(() => {
-    if (!running) return;
-    const id = setInterval(() => setNow(Date.now()), 250);
-    return () => clearInterval(id);
-  }, [running]);
-  if (!running) return null;
-  return (
-    <ul className="w-full flex flex-col gap-1 text-sm">
-      {timers.map((t) => (
-        <li
-          key={t.id}
-          className="flex justify-between px-3 py-2 rounded-lg bg-aai-surface border border-aai-border"
-        >
-          <span>{t.label || "Timer"}</span>
-          <span className="font-mono tabular-nums">{countdown(t.dueMs - now)}</span>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-// The device's CONFIG_AAI_DEVICE_ADDRESS, for "the weather" and "near me". Kept in this
-// browser only, like the device keeps it in its gitignored sdkconfig; read on each connect.
-function LocationField() {
-  const [value, setValue] = useState(readLocation);
+/** One of the values this browser reports on connect (settings.ts); saved as typed. */
+function SettingField({
+  setting,
+  label,
+  placeholder,
+  type = "text",
+}: {
+  setting: Setting;
+  label: string;
+  placeholder: string;
+  type?: "text" | "tel";
+}) {
+  const [value, setValue] = useState(() => readSetting(setting));
   return (
     <label className="w-full flex flex-col gap-1 text-xs opacity-70">
-      Speaker’s address
+      {label}
       <input
+        type={type}
         value={value}
         onChange={(e) => {
           setValue(e.target.value);
-          writeLocation(e.target.value);
+          writeSetting(setting, e.target.value);
         }}
-        placeholder="e.g. 123 Main St, Springfield"
+        placeholder={placeholder}
         className="px-3 py-2 rounded-lg bg-aai-surface border border-aai-border text-sm outline-none focus:border-aai-primary"
       />
     </label>
@@ -292,12 +288,4 @@ function LocationField() {
 
 function clock(at: number): string {
   return new Date(at).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
-}
-
-function countdown(ms: number): string {
-  const s = Math.max(0, Math.ceil(ms / 1000));
-  const h = Math.floor(s / 3600);
-  const mm = String(Math.floor((s % 3600) / 60)).padStart(h ? 2 : 1, "0");
-  const ss = String(s % 60).padStart(2, "0");
-  return h ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
 }

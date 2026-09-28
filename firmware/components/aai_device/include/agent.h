@@ -21,14 +21,15 @@ void agent_push_mic(const int16_t *pcm, size_t samples);
 // Local barge-in: flush playback and tell the agent to abort its reply.
 void agent_cancel(void);
 
+// Queue part of a notice pushed to the inbox (inbox.h): PCM16LE at BOARD_SAMPLE_RATE,
+// played as reply audio (agent_cancel() flushes it). `start` on its first bytes. Blocks
+// while the speaker buffer is full; false if room never came (the rest should be dropped).
+bool agent_play_notice(const uint8_t *data, size_t len, bool start);
+
 // Queue a tone as if it were reply audio (flushed by agent_cancel()). For tests.
 void agent_play_tone(int freq_hz, int ms);
 // Queue the wake cue. Local audio: not flushed by a cancel, and doesn't mute the mic.
 void agent_play_chime(void);
-// Queue one ring of the timer alarm (~720 ms), local audio like the chime.
-void agent_play_alarm(void);
-// Drop queued local audio (the alarm, when it is stopped mid-ring).
-void agent_stop_cues(void);
 
 bool agent_speaker_busy(void);
 // The speaker is playing the agent's reply, not just our own wake cue. Half-duplex mutes

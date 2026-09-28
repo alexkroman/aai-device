@@ -159,8 +159,8 @@ static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data)
         break;
     case AAI_EVENT_MESSAGE:  // only the type; observe() gets the whole message
     case AAI_EVENT_TICK:
-    case AAI_EVENT_TIMER_SET:
-    case AAI_EVENT_TIMER_CANCEL:
+    case AAI_EVENT_NOTICE:  // the inbox is not started by the test app
+    case AAI_EVENT_NOTICE_QUEUED:
         break;
     }
 }

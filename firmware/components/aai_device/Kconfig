@@ -22,6 +22,14 @@ menu "AAI Voice Device"
             agent as ?location= on connect so "coffee near me" and "what's the weather" mean
             here. Separate street, town and region with commas. Empty sends nothing.
 
+    config AAI_CLIENT_ID
+        string "Device id"
+        default ""
+        help
+            Names this speaker to the agent: sent as ?client= on voice sessions and used
+            for the inbox socket (WS /inbox) that reminders are pushed to. 1-64 of
+            A-Z a-z 0-9 _ -. Empty uses "speaker-" and the end of the Wi-Fi MAC.
+
     config AAI_FOLLOWUP_MS
         int "Follow-up window (ms)"
         default 8000

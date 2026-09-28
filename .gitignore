@@ -3,3 +3,6 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .cache/
+
+# Playwright MCP snapshots, console logs and screenshots
+.playwright-mcp/

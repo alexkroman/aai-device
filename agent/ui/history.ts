@@ -8,7 +8,7 @@ import type { ConversationItem } from "@alexkroman1/aai-ui";
 // never appended as it stands: that would log every earlier turn again. Each server
 // session is instead a CHAIN of entries whose items, end to end, are its conversation:
 // the chain is rewritten from the live list, and only what is new goes on the end, in
-// a new entry when something else (a note, a timer ringing) was logged since. So the
+// a new entry when something else (a note, a reminder arriving) was logged since. So the
 // log stays in the order things happened.
 
 export type Item =
@@ -49,7 +49,7 @@ type SessionEntry = Extract<Entry, { kind: "session" }>;
 
 /**
  * The live conversation of `sessionId`, written into the history. It continues the
- * newest chain for that session when it starts with the same turn, and starts a new
+ * newest chain for that session when every turn they share matches, and starts a new
  * run otherwise: a session the server had already retired comes back under the same
  * id but empty, and must not overwrite what the old one said.
  */
@@ -63,20 +63,25 @@ export function recordSession(
   const mine = (e: Entry): e is SessionEntry => e.kind === "session" && e.sessionId === sessionId;
   const run = history.findLast(mine)?.run ?? 0;
   const chain = history.flatMap((e, i) => (mine(e) && (e.run ?? 0) === run ? [i] : []));
-  const first = chain[0] === undefined ? undefined : (history[chain[0]] as SessionEntry);
-  if (!first || !sameTurn(first.items[0], items[0])) {
+  const stored = chain.flatMap((i) => (history[i] as SessionEntry).items);
+  // It continues the chain only if EVERY turn the two share matches. The first turn alone
+  // is not enough: a session the server lost comes back greeting, and the greeting is
+  // the first turn of the old one too.
+  const shared = Math.min(stored.length, items.length);
+  const continues =
+    chain.length > 0 && stored.slice(0, shared).every((it, k) => sameTurn(it, items[k]));
+  if (!continues) {
     const entry: SessionEntry = {
       kind: "session",
       sessionId,
-      run: first ? run + 1 : 0,
+      run: chain.length > 0 ? run + 1 : 0,
       at: now,
       items,
     };
     return trim([...history, entry]);
   }
-  const stored = chain.reduce((n, i) => n + (history[i] as SessionEntry).items.length, 0);
-  // Mid-reconnect, before the replay lands: nothing to learn, and nothing to shrink to.
-  if (items.length < stored) return [...history];
+  // Mid-reconnect, before the whole replay lands: nothing to learn, and nothing to shrink to.
+  if (items.length < stored.length) return [...history];
 
   const next = [...history];
   let offset = 0;

@@ -8,7 +8,6 @@ typedef enum {
     LEDS_THINKING,    // purple comet spinning around the ring (waiting on the agent)
     LEDS_SPEAKING,    // cyan
     LEDS_ERROR,       // red
-    LEDS_ALARM,       // orange comet spinning while a timer rings
 } leds_state_t;
 
 void leds_init(void);

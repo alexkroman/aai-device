@@ -132,47 +132,6 @@ static void test_unknown_and_malformed(void)
 
 // ---- custom events from our own tools (agent/tools/) --------------------------
 
-static void test_timer_set(void)
-{
-    TEST_ASSERT_TRUE(parse("{\"type\":\"custom.emitted\",\"event\":\"timer.set\","
-                           "\"data\":{\"seconds\":600,\"label\":\"pasta\"}}"));
-    TEST_ASSERT_EQUAL(PROTO_TIMER_SET, msg.type);
-    TEST_ASSERT_EQUAL(600, msg.seconds);
-    TEST_ASSERT_EQUAL_STRING("pasta", msg.text);
-    TEST_ASSERT_TRUE(parse("{\"type\":\"custom.emitted\",\"event\":\"timer.set\",\"data\":{\"seconds\":90}}"));
-    TEST_ASSERT_EQUAL(PROTO_TIMER_SET, msg.type);
-    TEST_ASSERT_EQUAL_STRING("", msg.text);  // label is optional
-}
-
-static void test_timer_set_bad_seconds_ignored(void)
-{
-    // The tool validates too, but the device must not arm a timer it can't honor.
-    const char *bad[] = {
-        "{\"type\":\"custom.emitted\",\"event\":\"timer.set\",\"data\":{}}",
-        "{\"type\":\"custom.emitted\",\"event\":\"timer.set\",\"data\":{\"seconds\":0}}",
-        "{\"type\":\"custom.emitted\",\"event\":\"timer.set\",\"data\":{\"seconds\":-5}}",
-        "{\"type\":\"custom.emitted\",\"event\":\"timer.set\",\"data\":{\"seconds\":86401}}",
-        "{\"type\":\"custom.emitted\",\"event\":\"timer.set\",\"data\":{\"seconds\":\"600\"}}",
-        "{\"type\":\"custom.emitted\",\"event\":\"timer.set\"}",
-    };
-    for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
-        TEST_ASSERT_TRUE(parse(bad[i]));
-        TEST_ASSERT_EQUAL_MESSAGE(PROTO_OTHER, msg.type, bad[i]);
-    }
-    TEST_ASSERT_TRUE(parse("{\"type\":\"custom.emitted\",\"event\":\"timer.set\",\"data\":{\"seconds\":86400}}"));
-    TEST_ASSERT_EQUAL(PROTO_TIMER_SET, msg.type);  // 24 h is the limit, inclusive
-}
-
-static void test_timer_cancel(void)
-{
-    TEST_ASSERT_TRUE(parse("{\"type\":\"custom.emitted\",\"event\":\"timer.cancel\",\"data\":{\"label\":\"eggs\"}}"));
-    TEST_ASSERT_EQUAL(PROTO_TIMER_CANCEL, msg.type);
-    TEST_ASSERT_EQUAL_STRING("eggs", msg.text);
-    TEST_ASSERT_TRUE(parse("{\"type\":\"custom.emitted\",\"event\":\"timer.cancel\"}"));
-    TEST_ASSERT_EQUAL(PROTO_TIMER_CANCEL, msg.type);
-    TEST_ASSERT_EQUAL_STRING("", msg.text);  // no label = every timer
-}
-
 static void test_stop(void)
 {
     TEST_ASSERT_TRUE(parse("{\"type\":\"custom.emitted\",\"event\":\"stop\",\"data\":{}}"));
@@ -202,42 +161,42 @@ static void test_parse_respects_length(void)
 static void test_url_fresh_session(void)
 {
     char url[128];
-    TEST_ASSERT_TRUE(proto_session_url("ws://10.0.0.2:3000/websocket", NULL, NULL, url, sizeof(url)));
+    TEST_ASSERT_TRUE(proto_session_url("ws://10.0.0.2:3000/websocket", NULL, NULL, NULL, url, sizeof(url)));
     TEST_ASSERT_EQUAL_STRING("ws://10.0.0.2:3000/websocket?resume=1", url);
-    TEST_ASSERT_TRUE(proto_session_url("ws://10.0.0.2:3000/websocket", "", NULL, url, sizeof(url)));
+    TEST_ASSERT_TRUE(proto_session_url("ws://10.0.0.2:3000/websocket", "", NULL, NULL, url, sizeof(url)));
     TEST_ASSERT_EQUAL_STRING("ws://10.0.0.2:3000/websocket?resume=1", url);
 }
 
 static void test_url_resume(void)
 {
     char url[128];
-    TEST_ASSERT_TRUE(proto_session_url("ws://h/websocket", "sess_1", NULL, url, sizeof(url)));
+    TEST_ASSERT_TRUE(proto_session_url("ws://h/websocket", "sess_1", NULL, NULL, url, sizeof(url)));
     TEST_ASSERT_EQUAL_STRING("ws://h/websocket?sessionId=sess_1", url);
 }
 
 static void test_url_existing_query(void)
 {
     char url[128];
-    TEST_ASSERT_TRUE(proto_session_url("wss://h/websocket?token=abc", NULL, NULL, url, sizeof(url)));
+    TEST_ASSERT_TRUE(proto_session_url("wss://h/websocket?token=abc", NULL, NULL, NULL, url, sizeof(url)));
     TEST_ASSERT_EQUAL_STRING("wss://h/websocket?token=abc&resume=1", url);
 }
 
 static void test_url_overflow(void)
 {
     char url[16];
-    TEST_ASSERT_FALSE(proto_session_url("ws://a-long-host-name/websocket", NULL, NULL, url, sizeof(url)));
+    TEST_ASSERT_FALSE(proto_session_url("ws://a-long-host-name/websocket", NULL, NULL, NULL, url, sizeof(url)));
 }
 
 static void test_url_location_encoded(void)
 {
     char url[160];
     TEST_ASSERT_TRUE(
-        proto_session_url("ws://h/websocket", NULL, "123 Example St, Portland, OR 97201", url, sizeof(url)));
+        proto_session_url("ws://h/websocket", NULL, NULL, "123 Example St, Portland, OR 97201", url, sizeof(url)));
     TEST_ASSERT_EQUAL_STRING("ws://h/websocket?resume=1&location=123%20Example%20St%2C%20Portland%2C%20OR%2097201",
                              url);
-    TEST_ASSERT_TRUE(proto_session_url("ws://h/websocket", "sess_1", "a&b=c", url, sizeof(url)));
+    TEST_ASSERT_TRUE(proto_session_url("ws://h/websocket", "sess_1", NULL, "a&b=c", url, sizeof(url)));
     TEST_ASSERT_EQUAL_STRING("ws://h/websocket?sessionId=sess_1&location=a%26b%3Dc", url);
-    TEST_ASSERT_TRUE(proto_session_url("ws://h/websocket", NULL, "", url, sizeof(url)));
+    TEST_ASSERT_TRUE(proto_session_url("ws://h/websocket", NULL, NULL, "", url, sizeof(url)));
     TEST_ASSERT_EQUAL_STRING("ws://h/websocket?resume=1", url);
 }
 
@@ -245,7 +204,109 @@ static void test_url_location_overflow(void)
 {
     // Room for the base and the key but not an encoded character: refuse, never truncate.
     char url[37];
-    TEST_ASSERT_FALSE(proto_session_url("ws://h/websocket", NULL, "a b", url, sizeof(url)));
+    TEST_ASSERT_FALSE(proto_session_url("ws://h/websocket", NULL, NULL, "a b", url, sizeof(url)));
+}
+
+static void test_url_client_before_location(void)
+{
+    char url[160];
+    TEST_ASSERT_TRUE(proto_session_url("ws://h/websocket", NULL, "kitchen-1", "a b", url, sizeof(url)));
+    TEST_ASSERT_EQUAL_STRING("ws://h/websocket?resume=1&client=kitchen-1&location=a%20b", url);
+    TEST_ASSERT_TRUE(proto_session_url("ws://h/websocket", "sess_1", "", NULL, url, sizeof(url)));
+    TEST_ASSERT_EQUAL_STRING("ws://h/websocket?sessionId=sess_1", url);
+}
+
+// ---- inbox ------------------------------------------------------------------
+
+static void test_valid_client_id(void)
+{
+    TEST_ASSERT_TRUE(proto_valid_client_id("speaker-a1b2c3"));
+    TEST_ASSERT_TRUE(proto_valid_client_id("A_z-9"));
+    char longest[65];
+    memset(longest, 'x', 64);
+    longest[64] = '\0';
+    TEST_ASSERT_TRUE(proto_valid_client_id(longest));
+    char too_long[66];
+    memset(too_long, 'x', 65);
+    too_long[65] = '\0';
+    TEST_ASSERT_FALSE(proto_valid_client_id(too_long));
+    TEST_ASSERT_FALSE(proto_valid_client_id(""));
+    TEST_ASSERT_FALSE(proto_valid_client_id("a b"));
+    TEST_ASSERT_FALSE(proto_valid_client_id("a/b"));
+}
+
+static void test_inbox_url(void)
+{
+    char url[96];
+    TEST_ASSERT_TRUE(proto_inbox_url("ws://10.0.0.2:3000/websocket", "kitchen", url, sizeof(url)));
+    TEST_ASSERT_EQUAL_STRING("ws://10.0.0.2:3000/inbox?client=kitchen", url);
+    TEST_ASSERT_TRUE(proto_inbox_url("wss://agent.example/websocket?token=abc", "k", url, sizeof(url)));
+    TEST_ASSERT_EQUAL_STRING("wss://agent.example/inbox?client=k", url);
+    TEST_ASSERT_TRUE(proto_inbox_url("ws://h:3000", "k", url, sizeof(url)));
+    TEST_ASSERT_EQUAL_STRING("ws://h:3000/inbox?client=k", url);
+}
+
+static void test_inbox_url_refuses(void)
+{
+    char url[24];
+    TEST_ASSERT_FALSE(proto_inbox_url("10.0.0.2:3000/websocket", "k", url, sizeof(url)));  // no scheme
+    TEST_ASSERT_FALSE(proto_inbox_url("ws:///websocket", "k", url, sizeof(url)));          // no host
+    TEST_ASSERT_FALSE(proto_inbox_url("ws://h/websocket", "a b", url, sizeof(url)));
+    TEST_ASSERT_FALSE(proto_inbox_url("ws://a-long-host-name:3000/websocket", "k", url, sizeof(url)));
+}
+
+static proto_notice_t notice;
+
+static bool parse_notice(const char *json) { return proto_parse_notice(json, strlen(json), &notice); }
+
+static void test_notice(void)
+{
+    TEST_ASSERT_TRUE(parse_notice("{\"type\":\"notice\",\"id\":\"wrun_1\",\"event\":\"reminder\","
+                                  "\"data\":{\"text\":\"call the plumber\"},\"bytes\":32000}"));
+    TEST_ASSERT_EQUAL_STRING("wrun_1", notice.id);
+    TEST_ASSERT_EQUAL_STRING("reminder", notice.event);
+    TEST_ASSERT_EQUAL_STRING("call the plumber", notice.text);
+    TEST_ASSERT_EQUAL(32000, notice.bytes);
+    // No data, no audio.
+    TEST_ASSERT_TRUE(parse_notice("{\"type\":\"notice\",\"id\":\"r\",\"event\":\"ring\",\"bytes\":0}"));
+    TEST_ASSERT_EQUAL_STRING("", notice.text);
+    TEST_ASSERT_EQUAL(0, notice.bytes);
+}
+
+static void test_notice_refused(void)
+{
+    static const char *bad[] = {
+        "{\"type\":\"custom.emitted\",\"id\":\"r\",\"event\":\"e\",\"bytes\":0}",
+        "{\"type\":\"notice\",\"event\":\"e\",\"bytes\":0}",              // no id
+        "{\"type\":\"notice\",\"id\":\"\",\"event\":\"e\",\"bytes\":0}",  // empty id
+        "{\"type\":\"notice\",\"id\":\"r\",\"bytes\":0}",                 // no event
+        "{\"type\":\"notice\",\"id\":\"r\",\"event\":\"e\"}",             // no bytes
+        "{\"type\":\"notice\",\"id\":\"r\",\"event\":\"e\",\"bytes\":-2}",
+        "{\"type\":\"notice\",\"id\":\"r\",\"event\":\"e\",\"bytes\":3}",  // half a sample
+        "{\"type\":\"notice\",\"id\":\"r\",\"event\":\"e\",\"bytes\":2.5}",
+        "{\"type\":\"notice\",\"id\":\"r\",\"event\":\"e\",\"bytes\":1e12}",
+        "not json",
+    };
+    for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+        TEST_ASSERT_FALSE_MESSAGE(parse_notice(bad[i]), bad[i]);
+    }
+    char json[300];
+    char id[PROTO_NOTICE_ID_MAX + 2];
+    memset(id, 'x', sizeof(id) - 1);
+    id[sizeof(id) - 1] = '\0';
+    snprintf(json, sizeof(json), "{\"type\":\"notice\",\"id\":\"%s\",\"event\":\"e\",\"bytes\":0}", id);
+    TEST_ASSERT_FALSE(parse_notice(json));  // one over the SDK's 128
+}
+
+static void test_notice_reply(void)
+{
+    char out[64];
+    TEST_ASSERT_TRUE(proto_notice_reply("ack", "wrun_1", out, sizeof(out)));
+    TEST_ASSERT_EQUAL_STRING("{\"type\":\"ack\",\"id\":\"wrun_1\"}", out);
+    TEST_ASSERT_TRUE(proto_notice_reply("busy", "a\"b", out, sizeof(out)));
+    TEST_ASSERT_EQUAL_STRING("{\"type\":\"busy\",\"id\":\"a\\\"b\"}", out);  // escaped
+    char tiny[8];
+    TEST_ASSERT_FALSE(proto_notice_reply("ack", "wrun_1", tiny, sizeof(tiny)));
 }
 
 // ---- pcm_align --------------------------------------------------------------
@@ -300,9 +361,6 @@ int main(void)
     RUN_TEST(test_errors);
     RUN_TEST(test_timed_out);
     RUN_TEST(test_unknown_and_malformed);
-    RUN_TEST(test_timer_set);
-    RUN_TEST(test_timer_set_bad_seconds_ignored);
-    RUN_TEST(test_timer_cancel);
     RUN_TEST(test_stop);
     RUN_TEST(test_unknown_custom_events);
     RUN_TEST(test_parse_respects_length);
@@ -312,6 +370,13 @@ int main(void)
     RUN_TEST(test_url_overflow);
     RUN_TEST(test_url_location_encoded);
     RUN_TEST(test_url_location_overflow);
+    RUN_TEST(test_url_client_before_location);
+    RUN_TEST(test_valid_client_id);
+    RUN_TEST(test_inbox_url);
+    RUN_TEST(test_inbox_url_refuses);
+    RUN_TEST(test_notice);
+    RUN_TEST(test_notice_refused);
+    RUN_TEST(test_notice_reply);
     RUN_TEST(test_align_even_frames);
     RUN_TEST(test_align_sample_split_across_frames);
     RUN_TEST(test_align_empty_frame_keeps_carry);
