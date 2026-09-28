@@ -78,12 +78,14 @@ check-contract:
 
 # ---- host tests (Homebrew LLVM: only upstream ASan has LeakSanitizer on macOS) --------
 
+# Configure the host test project into build dir $(1) with extra CMake args $(2).
+host_cmake = CC=$(LLVM)/clang cmake -S $(FW)/test/host -B $(1) -G Ninja $(2) >/dev/null
+
 $(FW)/build-host/compile_commands.json:
-	CC=$(LLVM)/clang cmake -S $(FW)/test/host -B $(FW)/build-host -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON >/dev/null
+	$(call host_cmake,$(FW)/build-host,-DCMAKE_EXPORT_COMPILE_COMMANDS=ON)
 
 $(FW)/build-fuzz/compile_commands.json:
-	CC=$(LLVM)/clang cmake -S $(FW)/test/host -B $(FW)/build-fuzz -G Ninja -DFUZZ=ON \
-	  -DCMAKE_EXPORT_COMPILE_COMMANDS=ON >/dev/null
+	$(call host_cmake,$(FW)/build-fuzz,-DFUZZ=ON -DCMAKE_EXPORT_COMPILE_COMMANDS=ON)
 
 # ASan + LeakSanitizer + UBSan, all fatal
 test-host: $(FW)/build-host/compile_commands.json
@@ -104,7 +106,7 @@ test-fuzz: $(FW)/build-fuzz/compile_commands.json
 	done
 
 test-coverage:
-	CC=$(LLVM)/clang cmake -S $(FW)/test/host -B $(FW)/build-cov -G Ninja -DCOVERAGE=ON >/dev/null
+	$(call host_cmake,$(FW)/build-cov,-DCOVERAGE=ON)
 	cmake --build $(FW)/build-cov
 	rm -f $(FW)/build-cov/*.profraw
 	cd $(FW)/build-cov && for t in test_*; do LLVM_PROFILE_FILE=$$t.profraw ./$$t >/dev/null || exit 1; done
@@ -139,7 +141,11 @@ format:
 	ruff check --fix $(FW) && ruff format $(FW)
 	cd agent && pnpm run lint:fix
 
+# The CLI runs from source, but the SDK packages it and agent.ts import resolve to their
+# dist/ (the @dev/source condition is only on inside the SDK repo), so SDK edits are
+# invisible until built. Turbo rebuilds only what changed; a no-op run is well under a second.
 agent:
+	cd $(AAI_SDK) && pnpm exec turbo run build --filter=@alexkroman1/aai-cli... --output-logs=errors-only
 	cd agent && AAI_DEV_HOST=0.0.0.0 node $(AAI_SDK)/packages/aai-cli/bin.mjs dev -p 3000
 
 flash: require-idf

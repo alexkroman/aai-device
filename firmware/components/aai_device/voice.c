@@ -55,7 +55,7 @@ static void fetch_task(void *arg)
         }
         if (s_streaming) {
             size_t samples = res->data_size / sizeof(int16_t);
-            if (!k_full_duplex && agent_speaker_busy()) {
+            if (!k_full_duplex && agent_talking()) {
                 // Half duplex: send silence while the agent talks so residual echo
                 // can't be transcribed as the user. Keeps the audio clock steady.
                 static const int16_t silence[1024];

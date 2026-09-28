@@ -16,6 +16,11 @@ CONFIG_ESP32S3_DATA_CACHE_64KB=y
 CONFIG_ESP32S3_DATA_CACHE_LINE_64B=y
 CONFIG_ESP32S3_INSTRUCTION_CACHE_32KB=y
 CONFIG_FREERTOS_HZ=1000
+# -O2: the default (-Og, debug) slows everything built from source here — lwIP, the websocket
+# client, mbedTLS, drivers, FreeRTOS. ESP-SR ships prebuilt, so the AFE is unaffected.
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+# Per-core load in the "playback ended" log (agent.c). Costs one timer read per context switch.
+CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=y
 
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
@@ -32,3 +37,9 @@ CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU1=n
 
 # Mic frames (sender task) and control messages must not wait on the receive path's lock
 CONFIG_ESP_WS_CLIENT_SEPARATE_TX_LOCK=y
+
+# TCP receive window: the default 5.7 KB caps a 60 ms-RTT cloud agent at ~95 KB/s, only 2x the
+# 48 KB/s of 24 kHz TTS, so the playback buffer refills slowly after a Wi-Fi stall. The
+# mailbox holds a window's worth of segments. Buffers go to PSRAM (SPIRAM_TRY_ALLOCATE_WIFI_LWIP).
+CONFIG_LWIP_TCP_WND_DEFAULT=32768
+CONFIG_LWIP_TCP_RECVMBOX_SIZE=32

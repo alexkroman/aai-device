@@ -29,7 +29,7 @@ static void loop_task(void *arg)
     }
 }
 
-esp_event_loop_handle_t aai_events_loop(void)
+static esp_event_loop_handle_t aai_events_loop(void)
 {
     if (!s_loop) {
         // No built-in task: esp_event would put its stack in scarce internal RAM, which the

@@ -14,6 +14,7 @@
 #include "esp_codec_dev_defaults.h"
 #include "esp_io_expander_tca95xx_16bit.h"
 #include "esp_log.h"
+#include "sdkconfig.h"
 #include "esp_system.h"
 
 static const char *TAG = "board";
@@ -28,7 +29,6 @@ static const char *TAG = "board";
 
 #define EXIO_SPEAKER_AMP IO_EXPANDER_PIN_NUM_8
 #define MIC_GAIN_DB      30.0
-#define DEFAULT_VOLUME   70
 
 static i2c_master_bus_handle_t s_i2c;
 static esp_io_expander_handle_t s_expander;
@@ -96,7 +96,7 @@ static esp_err_t speaker_init(void)
     ESP_RETURN_ON_FALSE(s_speaker, ESP_FAIL, TAG, "es8311");
     esp_codec_dev_sample_info_t fs = {.sample_rate = BOARD_SAMPLE_RATE, .channel = 2, .bits_per_sample = 32};
     ESP_RETURN_ON_FALSE(esp_codec_dev_open(s_speaker, &fs) == ESP_CODEC_DEV_OK, ESP_FAIL, TAG, "speaker open");
-    esp_codec_dev_set_out_vol(s_speaker, DEFAULT_VOLUME);
+    esp_codec_dev_set_out_vol(s_speaker, CONFIG_AAI_VOLUME);
     return ESP_OK;
 }
 
@@ -156,11 +156,4 @@ esp_err_t board_speaker_write(const int16_t *pcm, size_t samples)
 
 void board_speaker_set_volume(int volume) { esp_codec_dev_set_out_vol(s_speaker, volume); }
 
-void board_speaker_enable(bool on)
-{
-    static bool s_on;
-    if (on != s_on) {
-        esp_io_expander_set_level(s_expander, EXIO_SPEAKER_AMP, on);
-        s_on = on;
-    }
-}
+void board_speaker_enable(bool on) { esp_io_expander_set_level(s_expander, EXIO_SPEAKER_AMP, on); }

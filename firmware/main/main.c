@@ -18,7 +18,10 @@
 static const char *TAG = "main";
 
 #define CONNECT_TIMEOUT_MS 8000
-#define TICK_MS            100
+// While the agent is working on a reply the follow-up window doesn't apply (a tool turn can
+// go well past it without a server event), but a reply that never comes still ends it.
+#define THINKING_TIMEOUT_MS 60000
+#define TICK_MS             100
 
 typedef enum { STATE_IDLE, STATE_CONNECTING, STATE_ACTIVE } app_state_t;
 
@@ -67,27 +70,33 @@ static void on_wake(void)
     enter(STATE_CONNECTING);
 }
 
+// The ring while a session is active: speaking beats thinking beats listening.
+static void show_active(void)
+{
+    leds_set(agent_speaker_busy() ? LEDS_SPEAKING : s_thinking ? LEDS_THINKING : LEDS_LISTENING);
+}
+
 static void on_tick(void)
 {
     if (s_state == STATE_CONNECTING && now_ms() - s_state_since > CONNECT_TIMEOUT_MS) {
         ESP_LOGE(TAG, "could not reach agent at %s", CONFIG_AAI_AGENT_URL);
         end_session();
     } else if (s_state == STATE_ACTIVE) {
-        bool speaking = agent_speaker_busy();
-        leds_set(speaking ? LEDS_SPEAKING : s_thinking ? LEDS_THINKING : LEDS_LISTENING);
-        if (!speaking && now_ms() - agent_last_activity_ms() > CONFIG_AAI_FOLLOWUP_MS) {
+        show_active();
+        int64_t idle_limit = s_thinking ? THINKING_TIMEOUT_MS : CONFIG_AAI_FOLLOWUP_MS;
+        if (!agent_speaker_busy() && now_ms() - agent_last_activity_ms() > idle_limit) {
             end_session();
         }
     }
 }
 
-static void on_message(const proto_msg_t *msg)
+static void on_message(proto_type_t type)
 {
-    switch (msg->type) {
+    switch (type) {
     case PROTO_USER_TRANSCRIPT:
         s_thinking = true;
-        if (s_state == STATE_ACTIVE && !agent_speaker_busy()) {
-            leds_set(LEDS_THINKING);  // don't wait for the next tick
+        if (s_state == STATE_ACTIVE) {
+            show_active();  // don't wait for the next tick
         }
         break;
     case PROTO_AGENT_TRANSCRIPT:  // final reply text is in; its audio shows as speaking
@@ -121,7 +130,7 @@ static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data)
         on_tick();
         break;
     case AAI_EVENT_MESSAGE:
-        on_message(data);
+        on_message(*(const proto_type_t *)data);
         break;
     }
 }
@@ -133,11 +142,10 @@ void app_main(void)
     leds_init();
     leds_set(LEDS_BOOTING);
     ESP_ERROR_CHECK(board_init());
-    board_speaker_set_volume(CONFIG_AAI_VOLUME);
     wifi_start();
-    wifi_wait_connected(-1);
     agent_init();
-    voice_init(NULL);
+    voice_init(NULL);  // loads the wake word model while Wi-Fi joins
+    wifi_wait_connected(-1);
     ESP_ERROR_CHECK(aai_events_register(on_event, NULL));
     aai_events_start_tick(TICK_MS);
     leds_set(LEDS_OFF);
