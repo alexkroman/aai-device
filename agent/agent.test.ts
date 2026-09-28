@@ -65,6 +65,9 @@ describe("quickstart-agent template", () => {
     //
     // No `tools/` directory: weather is the host-side `open_meteo` builtin.
     expect(deployedDef.builtinTools).toContain("open_meteo");
+    expect(deployedDef.builtinTools).toEqual(
+      expect.arrayContaining(["calculate", "visit_webpage"]),
+    );
     expect(Object.keys(deployedDef.tools ?? {})).toEqual([]);
     // Not "some prompt" but NOT the framework's — `system-prompt.md` is the
     // one file an author edits first, and a prompt silently ignored produces
