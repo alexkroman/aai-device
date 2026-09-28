@@ -63,12 +63,17 @@ describe("quickstart-agent template", () => {
     // exactly what makes an assertion against it unable to see the file go
     // missing.
     //
-    // No `tools/` directory: weather is the host-side `open_meteo` builtin.
+    // Weather is the host-side `open_meteo` builtin; `tools/` holds the pollen,
+    // air quality and SMS tools.
     expect(deployedDef.builtinTools).toContain("open_meteo");
     expect(deployedDef.builtinTools).toEqual(
       expect.arrayContaining(["calculate", "visit_webpage"]),
     );
-    expect(Object.keys(deployedDef.tools ?? {})).toEqual([]);
+    expect(Object.keys(deployedDef.tools ?? {}).sort()).toEqual([
+      "air_quality",
+      "pollen",
+      "text_link",
+    ]);
     // Not "some prompt" but NOT the framework's — `system-prompt.md` is the
     // one file an author edits first, and a prompt silently ignored produces
     // an agent that behaves plausibly and wrongly rather than one that

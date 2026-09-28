@@ -28,7 +28,8 @@ export default agent({
   stt: assemblyAIStt({ voiceFocus: "off" }),
   // Host-side tools, enabled by name. Setting this REPLACES the default
   // (`["think"]`), so `think` is listed to keep it. `open_meteo`, `calculate`
-  // and `visit_webpage` are keyless; the other two read their keys from `.env`.
+  // and `visit_webpage` are keyless; the other two read their keys from `.env`,
+  // as does the `text_link` tool in `tools/`.
   // The device's `?location=` (CONFIG_AAI_DEVICE_ADDRESS) is what "near me"
   // and "the weather" default to.
   builtinTools: [
@@ -41,5 +42,5 @@ export default agent({
   ],
   // Declared so a deploy refuses to start without them rather than the tools
   // apologizing on every call.
-  requiredEnv: ["BRAVE_API_KEY", "GOOGLE_PLACES_API_KEY"],
+  requiredEnv: ["BRAVE_API_KEY", "GOOGLE_PLACES_API_KEY", "TEXTBELT_KEY", "SMS_TO_PHONE"],
 });
