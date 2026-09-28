@@ -3,7 +3,8 @@
 //   IDLE --wake--> CONNECTING --session.configured--> ACTIVE --quiet for FOLLOWUP_MS--> IDLE
 //
 // Saying the wake word while the agent is talking interrupts it. Timers the agent sets
-// (timers.h) run here, independent of sessions; saying the wake word while one rings stops it.
+// (timers.h) run here, independent of sessions; saying the wake word while one rings stops it,
+// and "stop" (the agent's stop tool) cancels them all and hangs up without a reply.
 
 #include "aai_events.h"
 #include "agent.h"
@@ -152,9 +153,27 @@ static void on_tick(void)
     }
 }
 
+// "Computer, stop" (the agent's stop tool). The model is still writing its follow-up to
+// the tool call: cancelling aborts it and flushes anything already queued, and hanging
+// up means nothing it says later has anywhere to play.
+static void stop_everything(void)
+{
+    ESP_LOGI(TAG, "stop: cancelled %d timer(s)", timers_cancel(&s_timers, NULL));
+    if (ringing()) {
+        stop_ringing();
+    }
+    if (s_state != STATE_IDLE) {
+        agent_cancel();
+        end_session();
+    }
+}
+
 static void on_message(proto_type_t type)
 {
     switch (type) {
+    case PROTO_STOP:
+        stop_everything();
+        break;
     case PROTO_USER_TRANSCRIPT:
         s_thinking = true;
         if (s_state == STATE_ACTIVE) {

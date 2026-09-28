@@ -64,7 +64,7 @@ describe("quickstart-agent template", () => {
     // missing.
     //
     // Weather is the host-side `open_meteo` builtin; `tools/` holds the pollen,
-    // air quality, SMS and timer tools.
+    // air quality, SMS, timer and stop tools.
     expect(deployedDef.builtinTools).toContain("open_meteo");
     expect(deployedDef.builtinTools).toEqual(
       expect.arrayContaining(["calculate", "visit_webpage"]),
@@ -74,6 +74,7 @@ describe("quickstart-agent template", () => {
       "cancel_timer",
       "pollen",
       "set_timer",
+      "stop",
       "text_link",
     ]);
     // Not "some prompt" but NOT the framework's — `system-prompt.md` is the

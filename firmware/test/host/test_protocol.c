@@ -173,6 +173,14 @@ static void test_timer_cancel(void)
     TEST_ASSERT_EQUAL_STRING("", msg.text);  // no label = every timer
 }
 
+static void test_stop(void)
+{
+    TEST_ASSERT_TRUE(parse("{\"type\":\"custom.emitted\",\"event\":\"stop\",\"data\":{}}"));
+    TEST_ASSERT_EQUAL(PROTO_STOP, msg.type);
+    TEST_ASSERT_TRUE(parse("{\"type\":\"custom.emitted\",\"event\":\"stop\"}"));
+    TEST_ASSERT_EQUAL(PROTO_STOP, msg.type);
+}
+
 static void test_unknown_custom_events(void)
 {
     TEST_ASSERT_TRUE(parse("{\"type\":\"custom.emitted\",\"event\":\"order.progress\",\"data\":{\"done\":1}}"));
@@ -295,6 +303,7 @@ int main(void)
     RUN_TEST(test_timer_set);
     RUN_TEST(test_timer_set_bad_seconds_ignored);
     RUN_TEST(test_timer_cancel);
+    RUN_TEST(test_stop);
     RUN_TEST(test_unknown_custom_events);
     RUN_TEST(test_parse_respects_length);
     RUN_TEST(test_url_fresh_session);

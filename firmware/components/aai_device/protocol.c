@@ -37,6 +37,9 @@ static proto_type_t parse_custom(const cJSON *msg, proto_msg_t *out)
         copy_str(out->text, sizeof(out->text), cJSON_GetObjectItem(data, "label"));
         return PROTO_TIMER_CANCEL;
     }
+    if (strcmp(event, "stop") == 0) {
+        return PROTO_STOP;
+    }
     return PROTO_OTHER;
 }
 

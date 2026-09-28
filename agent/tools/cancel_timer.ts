@@ -2,7 +2,7 @@ import { tool } from "@alexkroman1/aai";
 import { z } from "zod";
 
 // Cancels timers on the device (see set_timer.ts). A ringing timer is stopped by
-// saying the wake word, not by this.
+// saying the wake word, not by this; a bare "stop" is the stop tool.
 export default tool({
   description:
     "Cancel a timer running on the speaker. Pass its label to cancel just that one; " +

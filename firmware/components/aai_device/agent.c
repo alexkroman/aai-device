@@ -265,6 +265,9 @@ static void on_event(const char *json, size_t len)
         aai_events_post(msg.type == PROTO_TIMER_SET ? AAI_EVENT_TIMER_SET : AAI_EVENT_TIMER_CANCEL, &cmd, sizeof(cmd));
         break;
     }
+    case PROTO_STOP:  // acted on in main.c, via AAI_EVENT_MESSAGE
+        ESP_LOGI(TAG, "stop requested");
+        break;
     case PROTO_TIMED_OUT:
         amp_hold(false);
         s_session_id[0] = '\0';

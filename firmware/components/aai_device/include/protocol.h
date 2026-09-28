@@ -24,6 +24,7 @@ typedef enum {
     // arrives as custom.emitted {event, data}. Unknown custom events are PROTO_OTHER.
     PROTO_TIMER_SET,     // event "timer.set", data {seconds, label?}
     PROTO_TIMER_CANCEL,  // event "timer.cancel", data {label?}; no label = every timer
+    PROTO_STOP,          // event "stop": cancel every timer, silence the alarm, hang up
 } proto_type_t;
 
 #define PROTO_TIMER_MAX_SECONDS (24 * 60 * 60)
