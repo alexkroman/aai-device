@@ -16,6 +16,7 @@ SYSROOT   := --extra-arg=-isysroot$(shell xcrun --show-sdk-path 2>/dev/null)
 C_SOURCES := $(shell find $(FW)/main $(FW)/components $(FW)/test -name '*.[ch]' -not -path '*/build*' \
                -not -path '*/managed_components/*')
 UNIT_SRCS := $(FW)/components/aai_device/resample.c $(FW)/components/aai_device/protocol.c \
+             $(FW)/components/aai_device/timers.c \
              $(wildcard $(FW)/test/host/test_*.c)
 FUZZ_SRCS := $(wildcard $(FW)/test/fuzz/fuzz_*.c)
 FUZZ_SECS ?= 15
@@ -112,7 +113,8 @@ test-coverage:
 	cd $(FW)/build-cov && for t in test_*; do LLVM_PROFILE_FILE=$$t.profraw ./$$t >/dev/null || exit 1; done
 	$(LLVM)/llvm-profdata merge -o $(FW)/build-cov/all.profdata $(FW)/build-cov/*.profraw
 	$(LLVM)/llvm-cov export -summary-only -instr-profile=$(FW)/build-cov/all.profdata \
-	  $(FW)/build-cov/test_resample -object $(FW)/build-cov/test_protocol > $(FW)/build-cov/summary.json
+	  $(FW)/build-cov/test_resample -object $(FW)/build-cov/test_protocol -object $(FW)/build-cov/test_timers \
+	  > $(FW)/build-cov/summary.json
 	python3 $(FW)/tools/check_coverage.py $(FW)/build-cov/summary.json
 
 test-agent:

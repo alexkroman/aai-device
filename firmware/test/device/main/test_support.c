@@ -95,12 +95,15 @@ void test_board_init(void)
     }
 }
 
+static void observe(const proto_msg_t *msg);
+
 void test_voice_init(void)
 {
     static bool done;
     test_board_init();
     if (!done) {
         TEST_ASSERT_EQUAL(ESP_OK, aai_events_register(on_event, NULL));
+        agent_set_observer(observe);
         voice_init(clip_source);
         done = true;
         vTaskDelay(pdMS_TO_TICKS(500));  // let the AFE settle on silence
@@ -154,10 +157,10 @@ static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data)
     case AAI_EVENT_SESSION_CLOSED:
         g_obs.closed = true;
         break;
-    case AAI_EVENT_MESSAGE:
-        observe(data);
-        break;
+    case AAI_EVENT_MESSAGE:  // only the type; observe() gets the whole message
     case AAI_EVENT_TICK:
+    case AAI_EVENT_TIMER_SET:
+    case AAI_EVENT_TIMER_CANCEL:
         break;
     }
 }

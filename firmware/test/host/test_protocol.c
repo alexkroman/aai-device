@@ -130,6 +130,57 @@ static void test_unknown_and_malformed(void)
     TEST_ASSERT_FALSE(parse("{\"type\":\"reply.cancelled\""));  // truncated frame
 }
 
+// ---- custom events from our own tools (agent/tools/) --------------------------
+
+static void test_timer_set(void)
+{
+    TEST_ASSERT_TRUE(parse("{\"type\":\"custom.emitted\",\"event\":\"timer.set\","
+                           "\"data\":{\"seconds\":600,\"label\":\"pasta\"}}"));
+    TEST_ASSERT_EQUAL(PROTO_TIMER_SET, msg.type);
+    TEST_ASSERT_EQUAL(600, msg.seconds);
+    TEST_ASSERT_EQUAL_STRING("pasta", msg.text);
+    TEST_ASSERT_TRUE(parse("{\"type\":\"custom.emitted\",\"event\":\"timer.set\",\"data\":{\"seconds\":90}}"));
+    TEST_ASSERT_EQUAL(PROTO_TIMER_SET, msg.type);
+    TEST_ASSERT_EQUAL_STRING("", msg.text);  // label is optional
+}
+
+static void test_timer_set_bad_seconds_ignored(void)
+{
+    // The tool validates too, but the device must not arm a timer it can't honor.
+    const char *bad[] = {
+        "{\"type\":\"custom.emitted\",\"event\":\"timer.set\",\"data\":{}}",
+        "{\"type\":\"custom.emitted\",\"event\":\"timer.set\",\"data\":{\"seconds\":0}}",
+        "{\"type\":\"custom.emitted\",\"event\":\"timer.set\",\"data\":{\"seconds\":-5}}",
+        "{\"type\":\"custom.emitted\",\"event\":\"timer.set\",\"data\":{\"seconds\":86401}}",
+        "{\"type\":\"custom.emitted\",\"event\":\"timer.set\",\"data\":{\"seconds\":\"600\"}}",
+        "{\"type\":\"custom.emitted\",\"event\":\"timer.set\"}",
+    };
+    for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+        TEST_ASSERT_TRUE(parse(bad[i]));
+        TEST_ASSERT_EQUAL_MESSAGE(PROTO_OTHER, msg.type, bad[i]);
+    }
+    TEST_ASSERT_TRUE(parse("{\"type\":\"custom.emitted\",\"event\":\"timer.set\",\"data\":{\"seconds\":86400}}"));
+    TEST_ASSERT_EQUAL(PROTO_TIMER_SET, msg.type);  // 24 h is the limit, inclusive
+}
+
+static void test_timer_cancel(void)
+{
+    TEST_ASSERT_TRUE(parse("{\"type\":\"custom.emitted\",\"event\":\"timer.cancel\",\"data\":{\"label\":\"eggs\"}}"));
+    TEST_ASSERT_EQUAL(PROTO_TIMER_CANCEL, msg.type);
+    TEST_ASSERT_EQUAL_STRING("eggs", msg.text);
+    TEST_ASSERT_TRUE(parse("{\"type\":\"custom.emitted\",\"event\":\"timer.cancel\"}"));
+    TEST_ASSERT_EQUAL(PROTO_TIMER_CANCEL, msg.type);
+    TEST_ASSERT_EQUAL_STRING("", msg.text);  // no label = every timer
+}
+
+static void test_unknown_custom_events(void)
+{
+    TEST_ASSERT_TRUE(parse("{\"type\":\"custom.emitted\",\"event\":\"order.progress\",\"data\":{\"done\":1}}"));
+    TEST_ASSERT_EQUAL(PROTO_OTHER, msg.type);
+    TEST_ASSERT_TRUE(parse("{\"type\":\"custom.emitted\",\"event\":7}"));
+    TEST_ASSERT_EQUAL(PROTO_OTHER, msg.type);
+}
+
 static void test_parse_respects_length(void)
 {
     // Frames are not NUL-terminated; bytes past `len` must be ignored.
@@ -241,6 +292,10 @@ int main(void)
     RUN_TEST(test_errors);
     RUN_TEST(test_timed_out);
     RUN_TEST(test_unknown_and_malformed);
+    RUN_TEST(test_timer_set);
+    RUN_TEST(test_timer_set_bad_seconds_ignored);
+    RUN_TEST(test_timer_cancel);
+    RUN_TEST(test_unknown_custom_events);
     RUN_TEST(test_parse_respects_length);
     RUN_TEST(test_url_fresh_session);
     RUN_TEST(test_url_resume);

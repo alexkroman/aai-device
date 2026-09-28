@@ -14,7 +14,16 @@ typedef enum {
     AAI_EVENT_SESSION_CLOSED,  // socket closed, fatal error, or session timed out
     AAI_EVENT_MESSAGE,         // event data: proto_type_t (every server event except PROTO_OTHER)
     AAI_EVENT_TICK,            // periodic, for timeouts (see aai_events_start_tick)
+    AAI_EVENT_TIMER_SET,       // event data: aai_timer_cmd_t
+    AAI_EVENT_TIMER_CANCEL,    // event data: aai_timer_cmd_t (seconds unused; empty label = all)
 } aai_event_id_t;
+
+// Its own small payload: AAI_EVENT_MESSAGE carries only the type, since esp_event copies
+// every payload into internal RAM and the full proto_msg_t is ~650 bytes.
+typedef struct {
+    int seconds;
+    char label[32];
+} aai_timer_cmd_t;
 
 void aai_events_post(aai_event_id_t id, const void *data, size_t size);
 esp_err_t aai_events_register(esp_event_handler_t handler, void *arg);  // all AAI_EVENT ids

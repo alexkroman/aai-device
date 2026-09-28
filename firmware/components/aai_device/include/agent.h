@@ -25,6 +25,10 @@ void agent_cancel(void);
 void agent_play_tone(int freq_hz, int ms);
 // Queue the wake cue. Local audio: not flushed by a cancel, and doesn't mute the mic.
 void agent_play_chime(void);
+// Queue one ring of the timer alarm (~720 ms), local audio like the chime.
+void agent_play_alarm(void);
+// Drop queued local audio (the alarm, when it is stopped mid-ring).
+void agent_stop_cues(void);
 
 bool agent_speaker_busy(void);
 // The speaker is playing the agent's reply, not just our own wake cue. Half-duplex mutes
@@ -32,3 +36,8 @@ bool agent_speaker_busy(void);
 bool agent_talking(void);
 
 int64_t agent_last_activity_ms(void);
+
+// For tests: called with every parsed server event, on the websocket task. AAI_EVENT_MESSAGE
+// carries only the type; this is how a test sees transcripts, tool names and rates.
+typedef void (*agent_observer_t)(const proto_msg_t *msg);
+void agent_set_observer(agent_observer_t observer);

@@ -37,7 +37,7 @@ target_include_directories(cjson PUBLIC ${CJSON})
 target_compile_options(cjson PRIVATE -Wno-error -Wno-deprecated-declarations)
 
 enable_testing()
-foreach(name resample protocol)
+foreach(name resample protocol timers)
     add_executable(test_${name} test_${name}.c ${FW}/components/aai_device/${name}.c)
     target_include_directories(test_${name} PRIVATE ${FW}/components/aai_device/include)
     target_link_libraries(test_${name} unity cjson m)

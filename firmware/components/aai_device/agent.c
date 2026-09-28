@@ -26,7 +26,7 @@ static const char *TAG = "agent";
 
 #define MIC_BUF_BYTES  (2 * BOARD_SAMPLE_RATE * 2)  // 2 s pre-roll while connecting
 #define SPK_BUF_BYTES  (8 * BOARD_SAMPLE_RATE * 2)  // server paces ~1.5 s ahead
-#define CUE_BUF_BYTES  (BOARD_SAMPLE_RATE * 2)      // 1 s of local cues (the chime is 200 ms)
+#define CUE_BUF_BYTES  (BOARD_SAMPLE_RATE * 2)      // 1 s of local cues (the alarm is 720 ms)
 #define SEND_CHUNK     512                          // samples, 32 ms @ 16 kHz
 #define WS_BUFFER_SIZE 4096
 // esp_websocket_client ABORTS the connection when a send times out, so this is not a
@@ -55,6 +55,7 @@ static StreamBufferHandle_t s_spk_sb, s_cue_sb;
 static atomic_bool s_active;      // session open (mic audio accepted)
 static atomic_bool s_configured;  // session.configured received
 static atomic_bool s_flush;       // player should drop the buffered reply
+static atomic_bool s_flush_cues;  // ... and the queued cues (the alarm was stopped)
 // Cancels sent whose reply.cancelled hasn't arrived. Reply audio arriving meanwhile is the
 // interrupted reply's tail, already on the wire, and is dropped. The server answers every
 // cancel with reply.cancelled, in order on this socket, so the count always drains.
@@ -67,6 +68,7 @@ static atomic_bool s_amp_hold;
 static atomic_int_fast64_t s_amp_release_us;  // when the hold last ended; counts as playing
 static int s_in_rate = BOARD_SAMPLE_RATE, s_tts_rate = 24000;
 static TaskHandle_t s_player, s_sender;
+static agent_observer_t s_observer;  // tests only
 
 static volatile int64_t s_convert_max_us;  // diagnostics: slowest TTS conversion call
 static resampler_t s_tts_rs;               // agent TTS rate -> board rate; owned by the websocket task
@@ -76,7 +78,7 @@ static char s_session_id[96];
 static bool s_session_has_turns;
 static int64_t s_session_end_us;
 
-static void chime_init(void);
+static void cues_init(void);
 
 static int64_t now_us(void) { return esp_timer_get_time(); }
 static unsigned bytes_to_ms(size_t bytes) { return (unsigned)(bytes * 1000 / (BOARD_SAMPLE_RATE * 2)); }
@@ -202,6 +204,9 @@ static void on_event(const char *json, size_t len)
         return;
     }
     touch();
+    if (s_observer) {
+        s_observer(&msg);
+    }
     if (msg.type != PROTO_OTHER) {
         // Only the type: the app reads nothing else, and esp_event copies the payload into
         // internal RAM per post (the whole message is ~650 bytes).
@@ -253,6 +258,13 @@ static void on_event(const char *json, size_t len)
             aai_events_post(AAI_EVENT_SESSION_CLOSED, NULL, 0);
         }
         break;
+    case PROTO_TIMER_SET:
+    case PROTO_TIMER_CANCEL: {
+        aai_timer_cmd_t cmd = {.seconds = msg.seconds};
+        strlcpy(cmd.label, msg.text, sizeof(cmd.label));
+        aai_events_post(msg.type == PROTO_TIMER_SET ? AAI_EVENT_TIMER_SET : AAI_EVENT_TIMER_CANCEL, &cmd, sizeof(cmd));
+        break;
+    }
     case PROTO_TIMED_OUT:
         amp_hold(false);
         s_session_id[0] = '\0';
@@ -377,6 +389,9 @@ static void player_task(void *arg)
                 ESP_LOGW(TAG, "flush deferred: buffer busy");  // retried next loop
             }
         }
+        if (s_flush_cues && xStreamBufferReset(s_cue_sb) == pdPASS) {  // else retried next loop
+            s_flush_cues = false;
+        }
         if (s_amp_hold && !amp_on) {
             amp_up();
             amp_on = true;
@@ -429,7 +444,7 @@ static void player_task(void *arg)
             }
             // Poll only while something above is pending (a deadline, a deferred flush);
             // otherwise sleep until wake_player().
-            bool pending = s_flush || burst_start || (amp_on && !s_amp_hold);
+            bool pending = s_flush || s_flush_cues || burst_start || (amp_on && !s_amp_hold);
             ulTaskNotifyTake(pdTRUE, pending ? pdMS_TO_TICKS(20) : portMAX_DELAY);
         }
     }
@@ -449,7 +464,7 @@ void agent_init(void)
     s_mic_sb = psram_stream_buffer(MIC_BUF_BYTES);
     s_spk_sb = psram_stream_buffer(SPK_BUF_BYTES);
     s_cue_sb = psram_stream_buffer(CUE_BUF_BYTES);
-    chime_init();
+    cues_init();
     cJSON_InitHooks(&(cJSON_Hooks){.malloc_fn = psram_malloc, .free_fn = free});
     // Stacks in PSRAM: internal RAM is scarce, and the websocket client can only
     // put its own task stack there (none of these tasks touch flash).
@@ -545,30 +560,64 @@ void agent_cancel(void)
     }
 }
 
-// Blurt's rom1a-6 start cue, embedded by CMakeLists.txt (EMBED_FILES), already at
-// BOARD_SAMPLE_RATE. It peaks near full scale; scaled once at init to about the level of
-// the old 880 Hz beep (peak 6000) so the wake cue isn't a jump in loudness.
-extern const uint8_t _binary_wake_chime_pcm_start[];
-extern const uint8_t _binary_wake_chime_pcm_end[];
+// Local cues, embedded by CMakeLists.txt (EMBED_FILES) as raw PCM already at
+// BOARD_SAMPLE_RATE, and scaled once at init:
+// - Wake chime: Blurt's rom1a-6 start cue. It peaks near full scale; scaled to about the
+//   level of the old 880 Hz beep (peak 6000) so the wake cue isn't a jump in loudness.
+// - Timer alarm: Blurt's juno-78 start cue, a rising synth sweep, three times in a row per
+//   ring. Louder than the chime: it has to carry across the room.
+extern const uint8_t _binary_wake_chime_pcm_start[], _binary_wake_chime_pcm_end[];
+extern const uint8_t _binary_timer_alarm_pcm_start[], _binary_timer_alarm_pcm_end[];
 #define CHIME_GAIN_Q15 11000  // ~0.34
-static int16_t *s_chime;
-static size_t s_chime_bytes;
+#define ALARM_GAIN_Q15 20000  // ~0.61; the cue itself peaks at 0.8
+#define ALARM_HITS     3
+#define ALARM_GAP_MS   60
 
-static void chime_init(void)
+typedef struct {
+    int16_t *pcm;
+    size_t bytes;
+} cue_t;
+
+static cue_t s_chime, s_alarm;
+
+// `repeat` gain-scaled copies of one embedded blob, `gap_ms` of silence apart.
+static cue_t cue_load(const uint8_t *start, const uint8_t *end, int gain_q15, int repeat, int gap_ms)
 {
-    const int16_t *src = (const int16_t *)_binary_wake_chime_pcm_start;
+    const int16_t *src = (const int16_t *)start;
     // Linker symbols bounding one blob; as addresses, since they are two C objects.
-    size_t n = ((uintptr_t)_binary_wake_chime_pcm_end - (uintptr_t)_binary_wake_chime_pcm_start) / sizeof(int16_t);
-    s_chime = heap_caps_malloc(n * sizeof(int16_t), MALLOC_CAP_SPIRAM);
-    for (size_t i = 0; i < n; i++) {
-        s_chime[i] = (int16_t)((src[i] * CHIME_GAIN_Q15) >> 15);
+    size_t n = ((uintptr_t)end - (uintptr_t)start) / sizeof(int16_t);
+    size_t gap = (size_t)BOARD_SAMPLE_RATE * gap_ms / 1000;
+    size_t total = repeat * n + (repeat - 1) * gap;
+    int16_t *pcm = heap_caps_calloc(total, sizeof(int16_t), MALLOC_CAP_SPIRAM);
+    for (int r = 0; r < repeat; r++) {
+        int16_t *dst = pcm + r * (n + gap);
+        for (size_t i = 0; i < n; i++) {
+            dst[i] = (int16_t)((src[i] * gain_q15) >> 15);
+        }
     }
-    s_chime_bytes = n * sizeof(int16_t);
+    return (cue_t){pcm, total * sizeof(int16_t)};
 }
 
-void agent_play_chime(void)
+static void cues_init(void)
 {
-    xStreamBufferSend(s_cue_sb, s_chime, s_chime_bytes, pdMS_TO_TICKS(100));
+    s_chime = cue_load(_binary_wake_chime_pcm_start, _binary_wake_chime_pcm_end, CHIME_GAIN_Q15, 1, 0);
+    s_alarm =
+        cue_load(_binary_timer_alarm_pcm_start, _binary_timer_alarm_pcm_end, ALARM_GAIN_Q15, ALARM_HITS, ALARM_GAP_MS);
+}
+
+static void play_cue(const cue_t *cue)
+{
+    xStreamBufferSend(s_cue_sb, cue->pcm, cue->bytes, pdMS_TO_TICKS(100));
+    wake_player();
+}
+
+void agent_play_chime(void) { play_cue(&s_chime); }
+
+void agent_play_alarm(void) { play_cue(&s_alarm); }
+
+void agent_stop_cues(void)
+{
+    s_flush_cues = true;
     wake_player();
 }
 
@@ -610,3 +659,5 @@ int64_t agent_last_activity_ms(void)
     last = s_last_cue_us > last ? s_last_cue_us : last;
     return last / 1000;
 }
+
+void agent_set_observer(agent_observer_t observer) { s_observer = observer; }

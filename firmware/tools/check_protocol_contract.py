@@ -4,6 +4,9 @@ The firmware hard-codes event types, command types, JSON fields and URL params.
 If the SDK renames one, the device silently stops reacting to it; this makes
 that a build failure instead.
 
+Custom events are a second contract, with this repo's own agent: each one the firmware
+matches must still be sent by a tool in agent/tools/ (ctx.send), with the fields it reads.
+
 Usage: check_protocol_contract.py [path/to/aai/agent]   (default ~/Code/aai/agent)
 """
 
@@ -14,6 +17,7 @@ from pathlib import Path
 FW = Path(__file__).resolve().parent.parent
 SDK = Path(sys.argv[1] if len(sys.argv) > 1 else Path.home() / "Code/aai/agent")
 SDK_PROTOCOL = SDK / "packages/aai/src/sdk"
+AGENT_TOOLS = FW.parent / "agent/tools"
 
 
 def firmware_names() -> dict[str, set[str]]:
@@ -29,6 +33,9 @@ def firmware_names() -> dict[str, set[str]]:
         "command_field": set(re.findall(r'\\"(?!type\\")(\w+)\\":', agent_c)),
         # session URL query params
         "url_param": set(re.findall(r"%s(\w+)=", protocol_c)),  # "%s%sresume=1" -> resume
+        # custom.emitted events from agent/tools/, and the fields read from their data
+        "custom_event": set(re.findall(r'strcmp\(event, "([^"]+)"\)', protocol_c)),
+        "custom_field": set(re.findall(r'cJSON_GetObjectItem\(data, "([^"]+)"\)', protocol_c)),
     }
 
 
@@ -44,12 +51,15 @@ def main() -> int:
     schemas = sdk_text("protocol-events.ts", "protocol.ts")
     commands = sdk_text("protocol-commands.ts")
     upgrade = sdk_text("ws-upgrade.ts")
+    tools = "\n".join(f.read_text() for f in sorted(AGENT_TOOLS.glob("*.ts")))
     checks = {
         "event": lambda n: re.search(rf'(ev|z\.literal)\("{re.escape(n)}"', events),
         "field": lambda n: n == "type" or re.search(rf"\b{re.escape(n)}\??:", schemas),
         "command": lambda n: re.search(rf'(cmd|z\.literal)\("{re.escape(n)}"', commands),
         "command_field": lambda n: re.search(rf"\b{re.escape(n)}\??:", commands),
         "url_param": lambda n: re.search(rf'"{re.escape(n)}"', upgrade),
+        "custom_event": lambda n: re.search(rf'ctx\.send\(\s*"{re.escape(n)}"', tools),
+        "custom_field": lambda n: re.search(rf"\b{re.escape(n)}\b", tools),
     }
     missing = []
     for kind, names in firmware_names().items():

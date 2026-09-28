@@ -2,7 +2,8 @@
 //
 //   IDLE --wake--> CONNECTING --session.configured--> ACTIVE --quiet for FOLLOWUP_MS--> IDLE
 //
-// Saying the wake word while the agent is talking interrupts it.
+// Saying the wake word while the agent is talking interrupts it. Timers the agent sets
+// (timers.h) run here, independent of sessions; saying the wake word while one rings stops it.
 
 #include "aai_events.h"
 #include "agent.h"
@@ -12,6 +13,7 @@
 #include "freertos/FreeRTOS.h"
 #include "leds.h"
 #include "sdkconfig.h"
+#include "timers.h"
 #include "voice.h"
 #include "wifi.h"
 
@@ -22,6 +24,8 @@ static const char *TAG = "main";
 // go well past it without a server event), but a reply that never comes still ends it.
 #define THINKING_TIMEOUT_MS 60000
 #define TICK_MS             100
+#define RING_PERIOD_MS      1500   // one alarm ring (~720 ms) and a pause
+#define RING_MAX_MS         60000  // an unanswered alarm gives up
 
 typedef enum { STATE_IDLE, STATE_CONNECTING, STATE_ACTIVE } app_state_t;
 
@@ -31,6 +35,9 @@ static int64_t s_state_since;
 // The user's turn is committed and the agent hasn't finished its reply. Spans tool
 // calls: hold lines ("one moment...") play mid-turn, then it's back to waiting.
 static bool s_thinking;
+static timers_t s_timers;
+static int64_t s_ring_until;  // 0 = not ringing
+static int64_t s_next_ring;
 
 static int64_t now_ms(void) { return esp_timer_get_time() / 1000; }
 
@@ -40,17 +47,46 @@ static void enter(app_state_t state)
     s_state_since = now_ms();
 }
 
+static bool ringing(void) { return s_ring_until != 0; }
+
 static void end_session(void)
 {
     s_thinking = false;
     voice_set_streaming(false);
     agent_stop();
-    leds_set(s_state == STATE_ACTIVE ? LEDS_OFF : LEDS_ERROR);
+    leds_set(ringing() ? LEDS_ALARM : s_state == STATE_ACTIVE ? LEDS_OFF : LEDS_ERROR);
     enter(STATE_IDLE);
+}
+
+// The ring while a session is active: an alarm beats speaking beats thinking beats listening.
+static void show_active(void)
+{
+    leds_set(ringing()              ? LEDS_ALARM
+             : agent_speaker_busy() ? LEDS_SPEAKING
+             : s_thinking           ? LEDS_THINKING
+                                    : LEDS_LISTENING);
+}
+
+static void stop_ringing(void)
+{
+    s_ring_until = 0;
+    agent_stop_cues();  // not the rest of the ring already queued
+    if (s_state == STATE_ACTIVE) {
+        show_active();
+    } else {
+        leds_set(s_state == STATE_IDLE ? LEDS_OFF : LEDS_CONNECTING);
+    }
 }
 
 static void on_wake(void)
 {
+    if (ringing()) {
+        // "Computer" while the alarm rings = "stop", like a commercial speaker; it doesn't
+        // also open a session or interrupt one.
+        ESP_LOGI(TAG, "alarm stopped");
+        stop_ringing();
+        return;
+    }
     if (s_state != STATE_IDLE) {
         // Wake word mid-reply = "stop talking". Cancel before the chime: queued first, the
         // chime waited behind the buffered reply (blocking this loop) and was then flushed.
@@ -70,14 +106,40 @@ static void on_wake(void)
     enter(STATE_CONNECTING);
 }
 
-// The ring while a session is active: speaking beats thinking beats listening.
-static void show_active(void)
+static void tick_timers(void)
 {
-    leds_set(agent_speaker_busy() ? LEDS_SPEAKING : s_thinking ? LEDS_THINKING : LEDS_LISTENING);
+    int64_t now = now_ms();
+    char label[TIMERS_LABEL_MAX];
+    if (timers_pop_due(&s_timers, now, label, sizeof(label))) {
+        ESP_LOGI(TAG, "timer done%s%s", label[0] ? ": " : "", label);
+        s_ring_until = now + RING_MAX_MS;
+        s_next_ring = now;
+        leds_set(LEDS_ALARM);
+    }
+    if (!ringing()) {
+        return;
+    }
+    if (now >= s_ring_until) {
+        ESP_LOGI(TAG, "alarm unanswered");
+        stop_ringing();
+    } else if (now >= s_next_ring) {
+        agent_play_alarm();
+        s_next_ring = now + RING_PERIOD_MS;
+    }
+}
+
+static void on_timer_set(const aai_timer_cmd_t *cmd)
+{
+    if (timers_add(&s_timers, now_ms(), cmd->seconds, cmd->label)) {
+        ESP_LOGI(TAG, "timer set: %d s%s%s", cmd->seconds, cmd->label[0] ? ", " : "", cmd->label);
+    } else {
+        ESP_LOGW(TAG, "timer dropped: %d already running", TIMERS_MAX);
+    }
 }
 
 static void on_tick(void)
 {
+    tick_timers();
     if (s_state == STATE_CONNECTING && now_ms() - s_state_since > CONNECT_TIMEOUT_MS) {
         ESP_LOGE(TAG, "could not reach agent at %s", CONFIG_AAI_AGENT_URL);
         end_session();
@@ -131,6 +193,12 @@ static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data)
         break;
     case AAI_EVENT_MESSAGE:
         on_message(*(const proto_type_t *)data);
+        break;
+    case AAI_EVENT_TIMER_SET:
+        on_timer_set(data);
+        break;
+    case AAI_EVENT_TIMER_CANCEL:
+        ESP_LOGI(TAG, "cancelled %d timer(s)", timers_cancel(&s_timers, ((const aai_timer_cmd_t *)data)->label));
         break;
     }
 }

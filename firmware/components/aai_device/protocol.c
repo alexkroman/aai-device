@@ -17,6 +17,29 @@ static int valid_rate(const cJSON *item, int fallback)
     return v >= 8000 && v <= 48000 && v == (double)(int)v ? (int)v : fallback;
 }
 
+static proto_type_t parse_custom(const cJSON *msg, proto_msg_t *out)
+{
+    const char *event = cJSON_GetStringValue(cJSON_GetObjectItem(msg, "event"));
+    const cJSON *data = cJSON_GetObjectItem(msg, "data");
+    if (!event) {
+        return PROTO_OTHER;
+    }
+    if (strcmp(event, "timer.set") == 0) {
+        double s = cJSON_GetNumberValue(cJSON_GetObjectItem(data, "seconds"));  // NaN when missing
+        if (!(s >= 1 && s <= PROTO_TIMER_MAX_SECONDS)) {
+            return PROTO_OTHER;  // a timer we can't honor; the agent already said it's set
+        }
+        out->seconds = (int)s;
+        copy_str(out->text, sizeof(out->text), cJSON_GetObjectItem(data, "label"));
+        return PROTO_TIMER_SET;
+    }
+    if (strcmp(event, "timer.cancel") == 0) {
+        copy_str(out->text, sizeof(out->text), cJSON_GetObjectItem(data, "label"));
+        return PROTO_TIMER_CANCEL;
+    }
+    return PROTO_OTHER;
+}
+
 bool proto_parse(const char *json, size_t len, proto_msg_t *out)
 {
     memset(out, 0, sizeof(*out));
@@ -52,6 +75,8 @@ bool proto_parse(const char *json, size_t len, proto_msg_t *out)
         copy_str(out->text, sizeof(out->text), cJSON_GetObjectItem(msg, "message"));
     } else if (strcmp(type, "session.timed-out") == 0) {
         out->type = PROTO_TIMED_OUT;
+    } else if (strcmp(type, "custom.emitted") == 0) {
+        out->type = parse_custom(msg, out);
     } else {
         out->type = PROTO_OTHER;
     }

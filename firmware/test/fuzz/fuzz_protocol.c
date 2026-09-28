@@ -18,6 +18,9 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
                                                      msg.tts_sample_rate < 8000 || msg.tts_sample_rate > 48000)) {
             __builtin_trap();  // resampler_init would divide by zero / misbehave
         }
+        if (msg.type == PROTO_TIMER_SET && (msg.seconds < 1 || msg.seconds > PROTO_TIMER_MAX_SECONDS)) {
+            __builtin_trap();  // a timer the device can't honor
+        }
         char url[128];
         proto_session_url("ws://host:3000/websocket", msg.session_id, NULL, url, sizeof(url));
         // Server-chosen bytes as the location too: exercises the encoder's bounds.
