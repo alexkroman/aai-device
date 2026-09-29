@@ -60,3 +60,16 @@ export function browserId(): string {
   }
   return current;
 }
+
+/** This tab, for this page load: see {@link inboxHolderId}. */
+const TAB = crypto.randomUUID().slice(0, 8);
+
+/**
+ * The inbox holder id of THIS TAB. Not {@link browserId}: every tab shares localStorage,
+ * so two tabs presented the same (client, holder) pair, and the inbox's rule for a pair
+ * that reconnects — the new socket REPLACES the old, which is right for a device back
+ * from a Wi-Fi drop — had the tabs knock each other off about once a second, forever.
+ */
+export function inboxHolderId(): string {
+  return `${browserId()}-${TAB}`;
+}

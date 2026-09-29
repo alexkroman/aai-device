@@ -1,6 +1,6 @@
 import { useConversation, useEvent, useSession } from "@alexkroman1/aai-ui";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { browserId, clientId } from "./client-id.ts";
+import { clientId, inboxHolderId } from "./client-id.ts";
 import { playPcm, stopCues, unlockAudio } from "./cues.ts";
 import {
   addNote,
@@ -107,7 +107,7 @@ export function useDevice() {
   useEffect(
     () =>
       openInbox(clientId(), {
-        holder: browserId(),
+        holder: inboxHolderId(),
         busy: () => busy.current,
         onOnline: setInboxUp,
         onEvent,
