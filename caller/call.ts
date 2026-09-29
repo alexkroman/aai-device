@@ -20,12 +20,20 @@ export type CallTask = {
 const enc = encodeURIComponent;
 
 /** Claim the approved call for this session, or undefined when there is none to claim. */
-export async function claimCall(ctx: Ctx, callId: string, sessionId: string): Promise<CallTask | undefined> {
+export async function claimCall(
+  ctx: Ctx,
+  callId: string,
+  sessionId: string,
+): Promise<CallTask | undefined> {
   const rows = await rest<CallTask[]>(
     ctx,
     `/calls?id=eq.${enc(callId)}&status=in.(dialing,approved)&call_session_id=is.null` +
       "&select=id,callee,goal,may_agree,must_not,owner_name,status",
-    { method: "PATCH", body: { status: "in_progress", call_session_id: sessionId }, prefer: "return=representation" },
+    {
+      method: "PATCH",
+      body: { status: "in_progress", call_session_id: sessionId },
+      prefer: "return=representation",
+    },
   );
   return rows[0];
 }
@@ -35,16 +43,26 @@ export function callGreeting(owner: string): string {
   return `Hi, this is an AI assistant calling on behalf of ${owner.trim() || "a customer"}. Do you have a moment?`;
 }
 
+// One line each: a field is the household's words, and a newline in one would start a
+// line of its own in the prompt (a heading, a rule) that nobody wrote.
+const oneLine = (s: string | null | undefined) => (s ?? "").replace(/\s+/g, " ").trim();
+
 /** The task, as the model is told it for this call. */
 export function taskInstructions(task: CallTask): string {
-  const owner = task.owner_name || "the household you work for";
+  const named = oneLine(task.owner_name);
+  const owner = named || "the household you work for";
+  const mayAgree = oneLine(task.may_agree);
+  const mustNot = oneLine(task.must_not);
   return [
     "## This call",
-    `You are calling ${task.callee} on behalf of ${owner}.`,
-    `The goal: ${task.goal}`,
-    task.may_agree ? `You may agree to, without checking back: ${task.may_agree}` : "",
-    task.must_not ? `Do not: ${task.must_not}` : "",
-    `You have already said you are an AI assistant calling on behalf of ${owner} and asked if they have a moment. When they answer, say why you're calling.`,
+    `You are calling ${oneLine(task.callee)} on behalf of ${owner}.`,
+    `The goal: ${oneLine(task.goal)}`,
+    mayAgree
+      ? `You may agree to, without checking back: ${mayAgree}. Anything else, even if they offer it, you check with ${owner} first.`
+      : "",
+    mustNot ? `Do not: ${mustNot}` : "",
+    // The greeting it actually spoke, so what it's told it said is what the callee heard.
+    `You have already said: "${callGreeting(named)}" When they answer, say why you're calling.`,
   ]
     .filter(Boolean)
     .join("\n");

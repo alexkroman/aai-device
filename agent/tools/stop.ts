@@ -14,8 +14,10 @@ declare module "@alexkroman1/aai" {
 export default tool({
   description:
     "Stop everything on the speaker: silences what it is saying and ends the " +
-    "conversation. Use when they just say 'stop', 'cancel', 'never mind', " +
-    "'be quiet' or 'that's all'. Say nothing after calling it.",
+    "conversation. Use ONLY when the whole request is just 'stop', 'cancel', " +
+    "'never mind', 'be quiet' or 'that's all', with nothing after it. Never for " +
+    "cancelling something specific, such as reminders (that's cancel_reminders). " +
+    "Say nothing after calling it.",
   execute(_args, ctx) {
     ctx.send("stop", {});
     return { stopped: true };

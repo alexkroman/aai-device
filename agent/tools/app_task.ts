@@ -18,12 +18,14 @@ export default tool({
     "Do anything in their own apps (email, calendar, Slack, documents, tasks, notes and " +
     "more): look something up, summarize, send, create, update, or tell them later when " +
     "something happens (e.g. 'tell me when Sam emails'). It runs in the background and " +
-    "the speaker says the answer when it's done, usually within a minute. First say one " +
-    `short sentence that you're on it and will let them know, e.g. "${HANDOFF_LINE}", ` +
-    "then call this. Before anything that sends, posts, books, buys, deletes or changes " +
-    "something, say exactly what you'll do and call this only after they say yes, with " +
-    "'they confirmed' in the task. Set text only when they asked to be texted the " +
-    "answer; otherwise never offer or mention a text.",
+    "the speaker says the answer when it's done, usually within a minute. Call it, then " +
+    "say only the say_if_not_said line it returns, nothing more. Reading, searching or " +
+    "summarizing needs no yes, even when the answer is to be texted to them: call it " +
+    "straight away. Before an email or message to someone else, a post, booking, " +
+    "purchase, deletion or change, say exactly what you'll do and call this only after " +
+    "they say yes, with 'they confirmed' in the task. Set text to true when they asked to be texted the " +
+    "answer (writing 'text me' in the task sends nothing); otherwise never offer or " +
+    "mention a text.",
   inputSchema: z.object({
     task: z
       .string()
@@ -37,7 +39,10 @@ export default tool({
     text: z
       .boolean()
       .optional()
-      .describe("True only if they asked to be texted the answer; else it is only said"),
+      .describe(
+        "REQUIRED true whenever they said 'text me' or asked for the answer by text: the " +
+          "task wording alone does not send a text. Else leave it out; the answer is said.",
+      ),
   }),
   async execute({ task, text = false }, ctx) {
     const clientId = sessionClientId(ctx);
