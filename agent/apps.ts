@@ -279,6 +279,57 @@ export function compact(value: unknown): unknown {
   return value === null ? undefined : value;
 }
 
+/**
+ * Most of an action's result handed to the model, well under the SDK's tool-result cap
+ * (16000): the model re-reads a result on every later step of the run, and 50 emails
+ * compacted were still 26000 characters.
+ */
+export const MAX_ACTION_RESULT_CHARS = 12_000;
+
+/** Where in a result its longest list is, and how long that list is in JSON. */
+function longestList(value: unknown): { list: unknown[]; chars: number } | undefined {
+  let best: { list: unknown[]; chars: number } | undefined;
+  const visit = (v: unknown) => {
+    if (Array.isArray(v)) {
+      const chars = JSON.stringify(v).length;
+      if (v.length > 1 && (!best || chars > best.chars)) best = { list: v, chars };
+      v.forEach(visit);
+    } else if (v && typeof v === "object") Object.values(v).forEach(visit);
+  };
+  visit(value);
+  return best;
+}
+
+/**
+ * A compacted result cut to MAX_ACTION_RESULT_CHARS: its longest list loses items from the
+ * end until it fits, and says how many it kept, so the model knows the rest exists (and
+ * that the workbench is where all of it can be gone through). A result with no list to
+ * shorten is cut as text.
+ */
+export function fit(value: unknown, max = MAX_ACTION_RESULT_CHARS): unknown {
+  if (JSON.stringify(value ?? null).length <= max) return value;
+  const copy = structuredClone(value);
+  const dropped = new Map<unknown[], number>();
+  for (let guard = 0; guard < 64 && JSON.stringify(copy).length > max; guard++) {
+    const found = longestList(copy);
+    if (!found) break;
+    const cut = Math.max(1, Math.floor(found.list.length / 4));
+    found.list.splice(found.list.length - cut, cut);
+    dropped.set(found.list, (dropped.get(found.list) ?? 0) + cut);
+  }
+  const note =
+    dropped.size > 0
+      ? `Cut to fit: ${[...dropped].map(([l, n]) => `kept ${l.length}, dropped ${n}`).join("; ")}. ` +
+        "Ask for fewer or narrower results, or use workbench to go through all of them."
+      : undefined;
+  const text = JSON.stringify(copy);
+  if (text.length <= max) return note ? { result: copy, note } : copy;
+  return {
+    result_start: text.slice(0, max - 200),
+    note: "Cut to fit: too long to hand over whole. Use workbench to read all of it.",
+  };
+}
+
 export type ActionResult =
   | { ok: true; data: unknown; logId: string }
   | { ok: false; error: string; logId?: string };
@@ -325,7 +376,7 @@ export async function runAction(
     return { ok: false, error };
   }
   if (out.error) return { ok: false, error: out.error, logId: out.log_id };
-  return { ok: true, data: compact(out.data), logId: out.log_id };
+  return { ok: true, data: fit(compact(out.data)), logId: out.log_id };
 }
 
 // --- Past the ready-made actions: the app's own API -------------------------------------
@@ -377,7 +428,7 @@ export async function callApi(
   // A file is a download link, which is no use to a model that can't fetch it.
   return {
     status: out.status,
-    data: out.binary_data ? { note: "the API answered with a file" } : compact(out.data),
+    data: out.binary_data ? { note: "the API answered with a file" } : fit(compact(out.data)),
   };
 }
 
@@ -390,20 +441,27 @@ export async function callApi(
  */
 export const WORKBENCH_CELL_SECONDS = 25;
 
-/** Run Python in the speaker's background session: Composio's `COMPOSIO_REMOTE_WORKBENCH`. */
+/**
+ * Run Python in the speaker's background session: Composio's `COMPOSIO_REMOTE_WORKBENCH`.
+ * Not compacted like an action's result: what a cell prints IS the answer the worker
+ * asked for (a summary of 50 emails is longer than a field), so only its size is capped.
+ */
 export async function runWorkbench(
   ctx: Ctx,
   user: string,
   code: string,
   thought: string,
 ): Promise<ActionResult> {
-  return await runAction(
+  const out = await inSession<{ data?: unknown; error?: string | null; log_id: string }>(
     ctx,
     user,
-    "COMPOSIO_REMOTE_WORKBENCH",
-    { code_to_execute: code, thought },
+    "POST",
+    "/execute",
+    { tool_slug: "COMPOSIO_REMOTE_WORKBENCH", arguments: { code_to_execute: code, thought } },
     "background",
   );
+  if (out.error) return { ok: false, error: out.error, logId: out.log_id };
+  return { ok: true, data: fit(out.data), logId: out.log_id };
 }
 
 // --- What the page calls: list, connect, disconnect -------------------------------------

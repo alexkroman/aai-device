@@ -5,6 +5,8 @@ import {
   compact,
   disconnectApp,
   findActions,
+  fit,
+  MAX_ACTION_RESULT_CHARS,
   MAX_FOUND_ACTIONS,
   MAX_RESULT_STRING,
   runAction,
@@ -256,4 +258,28 @@ test("compact drops empties and clips long strings", () => {
     g: 0,
     h: `${"x".repeat(MAX_RESULT_STRING - 1)}…`,
   });
+});
+
+test("a result too big for the model loses list items from the end, and says so", () => {
+  const emails = Array.from({ length: 50 }, (_, i) => ({ id: `m${i}`, snippet: "x".repeat(500) }));
+  const out = fit({ messages: emails, nextPageToken: "t" }) as {
+    result: { messages: unknown[]; nextPageToken: string };
+    note: string;
+  };
+  expect(JSON.stringify(out).length).toBeLessThanOrEqual(MAX_ACTION_RESULT_CHARS + 300);
+  expect(out.result.messages.length).toBeLessThan(50);
+  expect(out.result.messages[0]).toEqual(emails[0]);
+  expect(out.result.nextPageToken).toBe("t");
+  expect(out.note).toMatch(/dropped \d+/);
+  expect(out.note).toContain("workbench");
+});
+
+test("a result that fits is handed over untouched", () => {
+  const small = { events: [{ summary: "Dentist" }] };
+  expect(fit(small)).toBe(small);
+});
+
+test("one long text with no list to shorten is cut as text", () => {
+  const out = fit({ stdout: "y".repeat(MAX_ACTION_RESULT_CHARS * 2) }) as { result_start: string };
+  expect(out.result_start.length).toBeLessThan(MAX_ACTION_RESULT_CHARS);
 });
