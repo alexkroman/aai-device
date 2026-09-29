@@ -40,6 +40,9 @@ static bool s_notice, s_notice_queued;
 
 static int64_t now_ms(void) { return esp_timer_get_time() / 1000; }
 
+/** A wake word handled later than this after it was heard is logged: the chime lagged. */
+#define WAKE_LAG_WARN_MS 150
+
 // Notices wait (the inbox answers "busy") while someone is talking to the agent: one
 // voice at a time.
 static void enter(app_state_t state)
@@ -157,9 +160,16 @@ static void on_message(proto_type_t type)
 static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
     switch ((aai_event_id_t)id) {
-    case AAI_EVENT_WAKE:
+    case AAI_EVENT_WAKE: {
+        // A wake word that waited behind a slow handler is heard as the device being slow
+        // to answer: say how long, so a slow chime points at the loop, not the AFE.
+        int64_t lag_ms = data ? (esp_timer_get_time() - *(const int64_t *)data) / 1000 : 0;
+        if (lag_ms > WAKE_LAG_WARN_MS) {
+            ESP_LOGW(TAG, "wake word handled %d ms after it was heard", (int)lag_ms);
+        }
         on_wake();
         break;
+    }
     case AAI_EVENT_SESSION_READY:
         if (s_state == STATE_CONNECTING) {
             enter(STATE_ACTIVE);

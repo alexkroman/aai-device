@@ -9,7 +9,7 @@
 ESP_EVENT_DECLARE_BASE(AAI_EVENT);
 
 typedef enum {
-    AAI_EVENT_WAKE,            // wake word detected (from the AFE task)
+    AAI_EVENT_WAKE,            // wake word detected (from the AFE task); data: int64_t esp_timer µs of the detection
     AAI_EVENT_SESSION_READY,   // session.configured received; mic audio is flowing
     AAI_EVENT_SESSION_CLOSED,  // socket closed, fatal error, or session timed out
     AAI_EVENT_MESSAGE,         // event data: proto_type_t (every server event except PROTO_OTHER)

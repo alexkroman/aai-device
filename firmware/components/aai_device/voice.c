@@ -8,6 +8,7 @@
 #include "esp_afe_sr_models.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "model_path.h"
@@ -50,8 +51,10 @@ static void fetch_task(void *arg)
             continue;
         }
         if (res->wakeup_state == WAKENET_DETECTED) {
+            // When it was heard, so the handler can tell a slow detection from a slow loop.
+            int64_t detected_us = esp_timer_get_time();
             ESP_LOGI(TAG, "wake word detected");
-            aai_events_post(AAI_EVENT_WAKE, NULL, 0);
+            aai_events_post(AAI_EVENT_WAKE, &detected_us, sizeof(detected_us));
         }
         if (s_streaming) {
             size_t samples = res->data_size / sizeof(int16_t);
@@ -79,7 +82,8 @@ void voice_init(voice_source_t source)
     cfg->memory_alloc_mode = AFE_MEMORY_ALLOC_MORE_PSRAM;
     s_afe = esp_afe_handle_from_config(cfg);
     s_afe_data = s_afe->create_from_config(cfg);
-    ESP_LOGI(TAG, "wake word model: %s", cfg->wakenet_model_name);
+    // DET_MODE_90 (0) is the more sensitive; DET_MODE_95 (1) needs a clearer "Computer".
+    ESP_LOGI(TAG, "wake word model: %s, detection mode %d", cfg->wakenet_model_name, (int)cfg->wakenet_mode);
     afe_config_free(cfg);
 
     xTaskCreatePinnedToCoreWithCaps(feed_task, "afe_feed", 4096, NULL, 10, NULL, 0, MALLOC_CAP_SPIRAM);

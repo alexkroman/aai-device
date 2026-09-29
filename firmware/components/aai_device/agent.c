@@ -16,6 +16,7 @@
 #include "esp_timer.h"
 #include "esp_websocket_client.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "freertos/stream_buffer.h"
 #include "freertos/task.h"
 #include "inbox.h"
@@ -70,7 +71,12 @@ static atomic_int_fast64_t s_last_reply_us, s_last_cue_us;  // last sample of ea
 static atomic_bool s_amp_hold;
 static atomic_int_fast64_t s_amp_release_us;  // when the hold last ended; counts as playing
 static int s_in_rate = BOARD_SAMPLE_RATE, s_tts_rate = 24000;
-static TaskHandle_t s_player, s_sender;
+static TaskHandle_t s_player, s_sender, s_closer;
+// Held from agent_start() until the closer has fully stopped the client: the one client
+// can't be started again while its task is still exiting.
+static SemaphoreHandle_t s_client_free;
+/** Longest agent_start() waits for the previous session's close before giving up. */
+#define CLIENT_FREE_WAIT_MS 8000
 static agent_observer_t s_observer;  // tests only
 
 static volatile int64_t s_convert_max_us;  // diagnostics: slowest TTS conversion call
@@ -455,8 +461,31 @@ static StreamBufferHandle_t psram_stream_buffer(size_t size)
     return xStreamBufferCreateStatic(size, 1, storage, sb);
 }
 
+// Closing a session's socket (a polite close frame, then waiting for the client task to
+// exit) takes up to a second, and up to the 5 s network timeout on a dead link. Done on
+// the events loop, it held back every event queued behind it, and a wake word said just
+// as a session ended waited it out before its chime: here it happens on its own task.
+static void closer_task(void *arg)
+{
+    for (;;) {
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        int64_t t0 = now_us();
+        if (esp_websocket_client_is_connected(s_ws)) {
+            esp_websocket_client_close(s_ws, pdMS_TO_TICKS(1000));  // polite close frame
+        }
+        // close() returns early without waiting if the server hung up first (and after its
+        // timeout); stop() is the only call that waits for the client task to exit, so the
+        // next agent_start() can't find it still running. No-op when already stopped.
+        esp_websocket_client_stop(s_ws);
+        ESP_LOGI(TAG, "session ended (socket closed in %d ms)", (int)((now_us() - t0) / 1000));
+        xSemaphoreGive(s_client_free);
+    }
+}
+
 void agent_init(void)
 {
+    s_client_free = xSemaphoreCreateBinary();
+    xSemaphoreGive(s_client_free);
     s_mic_sb = psram_stream_buffer(MIC_BUF_BYTES);
     s_spk_sb = psram_stream_buffer(SPK_BUF_BYTES);
     s_cue_sb = psram_stream_buffer(CUE_BUF_BYTES);
@@ -466,6 +495,8 @@ void agent_init(void)
     // put its own task stack there (none of these tasks touch flash).
     xTaskCreatePinnedToCoreWithCaps(player_task, "player", 4096, NULL, 7, &s_player, 0, MALLOC_CAP_SPIRAM);
     xTaskCreatePinnedToCoreWithCaps(sender_task, "sender", 4096, NULL, 6, &s_sender, 0, MALLOC_CAP_SPIRAM);
+    xTaskCreatePinnedToCoreWithCaps(closer_task, "ws_closer", 4096, NULL, 4, &s_closer, tskNO_AFFINITY,
+                                    MALLOC_CAP_SPIRAM);
 
     // One client for the device's lifetime. Creating/destroying it per session
     // fragments internal RAM until its task stack can no longer be allocated.
@@ -506,6 +537,20 @@ void agent_start(void)
              resume ? " (resume)" : "", (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
              (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
 
+    // Waits only when the previous session is still closing (the closer gives it back);
+    // the chime and ring were already shown, so the wait is heard as a slower connect,
+    // not a missed wake word.
+    int64_t t0 = now_us();
+    if (xSemaphoreTake(s_client_free, pdMS_TO_TICKS(CLIENT_FREE_WAIT_MS)) != pdTRUE) {
+        ESP_LOGE(TAG, "previous session still closing after %d ms", CLIENT_FREE_WAIT_MS);
+        aai_events_post(AAI_EVENT_SESSION_CLOSED, NULL, 0);
+        return;
+    }
+    int waited_ms = (int)((now_us() - t0) / 1000);
+    if (waited_ms > 50) {
+        ESP_LOGW(TAG, "waited %d ms for the previous session to close", waited_ms);
+    }
+
     s_configured = false;
     s_cancels_pending = 0;
     // The sender drops leftovers once as it goes idle, but a mic push racing agent_stop()
@@ -516,6 +561,8 @@ void agent_start(void)
     esp_websocket_client_set_uri(s_ws, uri);
     if (esp_websocket_client_start(s_ws) != ESP_OK) {
         ESP_LOGE(TAG, "websocket start failed");
+        s_active = false;
+        xSemaphoreGive(s_client_free);  // nothing to close: the next start may go ahead
         aai_events_post(AAI_EVENT_SESSION_CLOSED, NULL, 0);
     }
 }
@@ -529,14 +576,8 @@ void agent_stop(void)
     s_configured = false;
     amp_hold(false);
     s_session_end_us = now_us();
-    if (esp_websocket_client_is_connected(s_ws)) {
-        esp_websocket_client_close(s_ws, pdMS_TO_TICKS(1000));  // polite close frame
-    }
-    // close() returns early without waiting if the server hung up first (and after its
-    // timeout); stop() is the only call that waits for the client task to exit, so the
-    // next agent_start() can't find it still running. No-op when already stopped.
-    esp_websocket_client_stop(s_ws);
-    ESP_LOGI(TAG, "session ended");
+    // Returns at once: the closer task closes the socket and frees the client.
+    xTaskNotifyGive(s_closer);
 }
 
 void agent_push_mic(const int16_t *pcm, size_t samples)
