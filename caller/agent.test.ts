@@ -66,6 +66,9 @@ describe("the calling agent", () => {
     const call = { carrier: "twilio", callId: "CA1", parameters: { call: "call_1" } };
     const ctx = (await sessionContext({ sessionId: "s1", env, signal, call })) as { instructions: string };
     expect(ctx.instructions).toContain("calling Luigi's on behalf of Sam");
+    expect((ctx as { greeting?: string }).greeting).toBe(
+      "Hi, this is an AI assistant calling on behalf of Sam. Do you have a moment?",
+    );
     expect(ctx.instructions).toContain("any time 6:30-7:30");
     const [url, init] = fetch.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toContain("status=in.(dialing,approved)");
@@ -76,7 +79,7 @@ describe("the calling agent", () => {
   test("it speaks first, disclosing it is an AI, and the task then names the owner", () => {
     expect(agentDef.greeting).toMatch(/^Hi, this is an AI assistant calling on behalf of/);
     const task = { id: "c", callee: "X", goal: "g", may_agree: "", must_not: "", owner_name: "Sam", status: "in_progress" };
-    expect(taskInstructions(task)).toContain("say you are calling for Sam");
+    expect(taskInstructions(task)).toContain("calling on behalf of Sam");
   });
 
   test("end_call ends the session after the goodbye is spoken", async () => {

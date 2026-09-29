@@ -30,6 +30,11 @@ export async function claimCall(ctx: Ctx, callId: string, sessionId: string): Pr
   return rows[0];
 }
 
+/** The call's first words: the AI disclosure, for whom, and a pause for them to answer. */
+export function callGreeting(owner: string): string {
+  return `Hi, this is an AI assistant calling on behalf of ${owner.trim() || "a customer"}. Do you have a moment?`;
+}
+
 /** The task, as the model is told it for this call. */
 export function taskInstructions(task: CallTask): string {
   const owner = task.owner_name || "the household you work for";
@@ -39,7 +44,7 @@ export function taskInstructions(task: CallTask): string {
     `The goal: ${task.goal}`,
     task.may_agree ? `You may agree to, without checking back: ${task.may_agree}` : "",
     task.must_not ? `Do not: ${task.must_not}` : "",
-    `You have already said you are an AI assistant calling for a customer and asked if they have a moment. When they answer, say you are calling for ${owner}, then why you're calling.`,
+    `You have already said you are an AI assistant calling on behalf of ${owner} and asked if they have a moment. When they answer, say why you're calling.`,
   ]
     .filter(Boolean)
     .join("\n");

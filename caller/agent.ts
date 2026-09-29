@@ -1,5 +1,5 @@
 import { agent } from "@alexkroman1/aai";
-import { appendTurn, claimCall, finishCall, taskInstructions } from "./call.ts";
+import { appendTurn, callGreeting, claimCall, finishCall, taskInstructions } from "./call.ts";
 
 // The agent that makes the household's phone calls. The speaker (../agent) drafts a call,
 // the household approves it out loud, and the speaker's `call` workflow asks Twilio to dial
@@ -13,8 +13,9 @@ export default agent({
   // Spoken the moment the call connects: silence on an outbound call reads as a dead
   // line (the first live call sat waiting for the callee to speak). The disclosure comes
   // first, then a pause for them to say they have a moment; the purpose follows in the
-  // first reply. Generic until the SDK can set a greeting per session (the owner's name).
-  greeting: "Hi, this is an AI assistant calling on behalf of a customer. Do you have a moment?",
+  // first reply. sessionContext replaces it per call with the owner's name (callGreeting);
+  // this is what a call whose task can't name one says.
+  greeting: callGreeting(""),
   voice: "jane",
   telephony: ["twilio"],
   // Only its own two tools: no search, no texting, no memory. A call does one thing.
@@ -26,7 +27,7 @@ export default agent({
     try {
       const task = await claimCall({ env, signal }, callId, sessionId);
       if (!task) return { refuse: "no approved call with that id" };
-      return { instructions: taskInstructions(task) };
+      return { instructions: taskInstructions(task), greeting: callGreeting(task.owner_name) };
     } catch {
       // In doubt, refuse: a session that can't be tied to an approved call must not talk.
       return { refuse: "could not load the call" };
