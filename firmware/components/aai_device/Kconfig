@@ -32,7 +32,7 @@ menu "AAI Voice Device"
 
     config AAI_FOLLOWUP_MS
         int "Follow-up window (ms)"
-        default 8000
+        default 3000
         help
             After the agent finishes speaking, keep listening this long for a follow-up
             before hanging up and going back to wake word detection.

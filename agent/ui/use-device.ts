@@ -31,7 +31,7 @@ import {
 // ?sessionId= does and the agent still knows what was said a minute ago.
 
 /** firmware sdkconfig CONFIG_AAI_FOLLOWUP_MS */
-const FOLLOWUP_MS = 8000;
+const FOLLOWUP_MS = 3000;
 const CONNECT_TIMEOUT_MS = 8000;
 const THINKING_TIMEOUT_MS = 60_000;
 const TICK_MS = 100;
