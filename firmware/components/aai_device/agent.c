@@ -660,7 +660,8 @@ void agent_play_tone(int freq_hz, int ms)
 
 bool agent_play_notice(const uint8_t *data, size_t len, bool start)
 {
-    // Pairs bytes across frames like on_audio(); the inbox task is the only caller.
+    // Pairs bytes across frames like on_audio(). One caller at a time: the inbox's player task,
+    // or its socket task for a notice too big to load first (never both: inbox.c).
     EXT_RAM_BSS_ATTR static int16_t pcm[2048 / 2 + 1];
     static pcm_aligner_t aligner;
     if (start) {
