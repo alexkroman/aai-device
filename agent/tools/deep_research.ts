@@ -18,7 +18,7 @@ export default tool({
     topic: z
       .string()
       .min(3)
-      .max(300)
+      .max(1000)
       .describe(
         "What to research, with every detail they gave, e.g. 'heat pumps for a 1920s house in Portland'",
       ),

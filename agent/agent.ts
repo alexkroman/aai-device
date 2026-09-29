@@ -33,8 +33,8 @@ export default agent({
   // (`["think"]`), so `think` is listed to keep it. `open_meteo`, `calculate`
   // and `visit_webpage` are keyless; the rest read their keys from `.env`.
   // `text_me` texts the browser's reported phone, else SMS_TO_PHONE, via Textbelt.
-  // The device's `?location=` (CONFIG_AAI_DEVICE_ADDRESS) is what "near me"
-  // and "the weather" default to.
+  // "near me" and "the weather" mean the saved home_address (context.ts); the
+  // device's `?location=` (CONFIG_AAI_DEVICE_ADDRESS) only when none is saved.
   builtinTools: [
     "think",
     "open_meteo",
@@ -81,6 +81,9 @@ export default agent({
   // Declared so a deploy refuses to start without them rather than the tools
   // apologizing on every call.
   requiredEnv: [
+    // The profile, history, reminders and calls (supabase.ts): every session start reads them.
+    "SUPABASE_URL",
+    "SUPABASE_SECRET_KEY",
     "BRAVE_API_KEY",
     "GOOGLE_PLACES_API_KEY",
     "TEXTBELT_KEY",

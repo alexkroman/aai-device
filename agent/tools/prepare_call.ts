@@ -60,7 +60,10 @@ export default tool({
         `${owner || "you"}, and ${goal}.` +
         (may_agree ? ` I may agree to: ${may_agree}.` : "") +
         " I won't give any payment or ID details, and I'll hang up within five minutes.",
-      next: "Say read_back to them and ask if you should place the call. Call place_call only after a clear yes.",
+      next:
+        "Say read_back to them exactly as written: don't paraphrase, shorten it, or drop the " +
+        "AI-assistant sentence. Then ask if you should place the call. Call place_call only " +
+        "after a clear yes.",
     };
   },
 });
