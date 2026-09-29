@@ -10,9 +10,11 @@ import { appendTurn, claimCall, finishCall, taskInstructions } from "./call.ts";
 export default agent({
   name: "Home Speaker Caller",
   description: "Places phone calls the household approved, on its behalf",
-  // No greeting: on an outbound call the callee speaks first ("Hello?"), and the first
-  // reply carries the AI disclosure the task below sets out.
-  greeting: "",
+  // Spoken the moment the call connects: silence on an outbound call reads as a dead
+  // line (the first live call sat waiting for the callee to speak). The disclosure comes
+  // first, then a pause for them to say they have a moment; the purpose follows in the
+  // first reply. Generic until the SDK can set a greeting per session (the owner's name).
+  greeting: "Hi, this is an AI assistant calling on behalf of a customer. Do you have a moment?",
   voice: "jane",
   telephony: ["twilio"],
   // Only its own two tools: no search, no texting, no memory. A call does one thing.

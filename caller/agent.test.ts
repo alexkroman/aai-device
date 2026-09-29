@@ -73,11 +73,10 @@ describe("the calling agent", () => {
     expect(JSON.parse(String(init.body))).toEqual({ status: "in_progress", call_session_id: "s1" });
   });
 
-  test("the first sentence discloses it is an AI, for whoever the owner is", () => {
-    const task = { id: "c", callee: "X", goal: "g", may_agree: "", must_not: "", owner_name: "", status: "in_progress" };
-    expect(taskInstructions(task)).toContain(
-      '"Hi, this is an AI assistant calling on behalf of the household you work for."',
-    );
+  test("it speaks first, disclosing it is an AI, and the task then names the owner", () => {
+    expect(agentDef.greeting).toMatch(/^Hi, this is an AI assistant calling on behalf of/);
+    const task = { id: "c", callee: "X", goal: "g", may_agree: "", must_not: "", owner_name: "Sam", status: "in_progress" };
+    expect(taskInstructions(task)).toContain("say you are calling for Sam");
   });
 
   test("end_call ends the session after the goodbye is spoken", async () => {

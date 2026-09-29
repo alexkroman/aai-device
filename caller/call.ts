@@ -39,7 +39,7 @@ export function taskInstructions(task: CallTask): string {
     `The goal: ${task.goal}`,
     task.may_agree ? `You may agree to, without checking back: ${task.may_agree}` : "",
     task.must_not ? `Do not: ${task.must_not}` : "",
-    `Your first sentence, as soon as they answer, is: "Hi, this is an AI assistant calling on behalf of ${owner}." Then say why you're calling.`,
+    `You have already said you are an AI assistant calling for a customer and asked if they have a moment. When they answer, say you are calling for ${owner}, then why you're calling.`,
   ]
     .filter(Boolean)
     .join("\n");
