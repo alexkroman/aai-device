@@ -34,7 +34,7 @@ AAI_SDK   ?= $(HOME)/Code/aai/agent-builtin-api-tools
 
 .PHONY: check require-idf lint lint-format lint-tidy lint-cppcheck lint-python lint-agent \
         build-firmware test-host test-fuzz test-coverage check-contract check-size test-agent \
-        device-freshness test-device test-e2e format agent supabase flash monitor
+        device-freshness test-device test-e2e format agent caller supabase flash monitor
 
 check: require-idf lint build-firmware test-host test-fuzz test-coverage check-contract check-size \
        test-agent device-freshness
@@ -176,6 +176,12 @@ agent: export AAI_RUN_CODE := deno
 agent:
 	cd $(AAI_SDK) && pnpm exec turbo run build --filter=@alexkroman1/aai-cli... --output-logs=errors-only
 	env="$$(supabase/up.sh)" && eval "$$env" && cd agent && AAI_DEV_HOST=0.0.0.0 node $(AAI_SDK)/packages/aai-cli/bin.mjs dev -p 3000
+
+# The agent that places the household's phone calls (caller/), behind a Cloudflare quick
+# tunnel Twilio can reach; its URL is published to the speaker while it runs. Run beside
+# `make agent`. TWILIO_* live in agent/.env: the speaker dials, this agent talks.
+caller:
+	env="$$(supabase/up.sh)" && eval "$$env" && AAI_SDK=$(AAI_SDK) caller/run.sh
 
 # Start the stack on its own (Studio at http://127.0.0.1:55423). `supabase stop` stops it.
 supabase:

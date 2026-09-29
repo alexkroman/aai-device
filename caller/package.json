@@ -1,0 +1,38 @@
+{
+  "type": "module",
+  "engines": {
+    "node": ">=24 <27"
+  },
+  "scripts": {
+    "dev": "aai dev",
+    "prestart": "aai build --skip-tests",
+    "start": "aai start",
+    "build": "aai build",
+    "test": "aai test",
+    "test:agent": "aai test --only",
+    "eval": "aai eval",
+    "publish:agent": "aai publish"
+  },
+  "dependencies": {
+    "@alexkroman1/aai": "link:../../aai/agent-builtin-api-tools/packages/aai",
+    "@alexkroman1/aai-cli": "link:../../aai/agent-builtin-api-tools/packages/aai-cli",
+    "@alexkroman1/aai-runtime": "link:../../aai/agent-builtin-api-tools/packages/aai-runtime",
+    "@alexkroman1/aai-ui": "link:../../aai/agent-builtin-api-tools/packages/aai-ui",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "tailwindcss": "^4.0.0",
+    "xstate": "^5.32.6",
+    "zod": "^4.5.4"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/node": "^24.10.1",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.5",
+    "@vitejs/plugin-react": "^6.1.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.2",
+    "vitest": "^4.1.11"
+  },
+  "name": "caller"
+}

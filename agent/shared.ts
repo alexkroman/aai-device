@@ -1,5 +1,6 @@
 import { workflow } from "@alexkroman1/aai";
 import { z } from "zod";
+import { callFlow } from "./workflows/call.ts";
 import { memorizeFlow } from "./workflows/memorize.ts";
 import { remindFlow } from "./workflows/remind.ts";
 import { researchFlow } from "./workflows/research.ts";
@@ -26,6 +27,15 @@ export const research = workflow({
     phone: z.string().optional().describe("The number the client reported; else SMS_TO_PHONE"),
   }),
   run: researchFlow,
+});
+
+export const call = workflow({
+  description: "Dial a call the household approved, wait for it to end, and say how it went",
+  input: z.object({
+    callId: z.string().describe("The approved calls row (tools/place_call.ts)"),
+    clientId: z.string().describe("The speaker that asked, told the outcome"),
+  }),
+  run: callFlow,
 });
 
 export const memorize = workflow({

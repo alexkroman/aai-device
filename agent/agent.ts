@@ -2,7 +2,7 @@ import { agent } from "@alexkroman1/aai";
 import { assemblyAIStt } from "@alexkroman1/aai/stt";
 import { sessionContext } from "./context.ts";
 import { routes } from "./routes.ts";
-import { memorize, remind, research } from "./shared.ts";
+import { call, memorize, remind, research } from "./shared.ts";
 
 // The whole agent: this file and `system-prompt.md` beside it, which is found
 // by WHERE IT SITS rather than imported.
@@ -56,7 +56,7 @@ export default agent({
   // that texts the report and announces a summary on the speaker when it is done.
   // After-the-conversation memory (workflows/memorize.ts): the session's turns go to mem0,
   // which keeps what lasts, and are digested into the speaker's compacted history.
-  workflows: { remind, research, memorize },
+  workflows: { remind, research, memorize, call },
   // Every connect of a speaker (its ?client= id) is ONE long conversation: the SDK
   // replays the last few hours verbatim, and this adds everything older, compacted, plus
   // all that mem0 holds about the household (context.ts). Fixed for the session.

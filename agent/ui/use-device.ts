@@ -288,5 +288,7 @@ function mirrorItem(event: { type: string } & Record<string, unknown>): Item | u
 function noticeText(n: Notice): string {
   const text = n.data?.text ?? n.data?.topic;
   const what = typeof text === "string" ? `: ${text}` : "";
-  return n.event === "reminder" ? `Reminder${what}` : `${n.event}${what}`;
+  const label =
+    n.event === "reminder" ? "Reminder" : n.event.charAt(0).toUpperCase() + n.event.slice(1);
+  return `${label}${what}`;
 }

@@ -4,7 +4,7 @@ import { geocode } from "./google.ts";
 import { createLinkCode, linkStatus } from "./link.ts";
 import { addMemories, allMemories, forgetMemory, updateMemory } from "./memory.ts";
 import { readProfile, writeProfile } from "./profile.ts";
-import { remind, research } from "./shared.ts";
+import { call, remind, research } from "./shared.ts";
 import { rest } from "./supabase.ts";
 import { taskLabels } from "./tasks.ts";
 import { failureReason } from "./workflows/research.ts";
@@ -182,9 +182,13 @@ const handlers: Record<string, Handler> = {
   // --- Running: this speaker's reminders and research jobs -------------------------------
   "GET /tasks": async (req, ctx) => {
     const id = client(req);
-    // Both are keyed by the speaker's client id (remind_me, deep_research).
+    // All keyed by the speaker's client id (remind_me, deep_research, place_call).
     const runs = (
-      await Promise.all([ctx.workflows.find(remind, id), ctx.workflows.find(research, id)])
+      await Promise.all([
+        ctx.workflows.find(remind, id),
+        ctx.workflows.find(research, id),
+        ctx.workflows.find(call, id),
+      ])
     )
       .flat()
       .filter(
@@ -215,9 +219,15 @@ const handlers: Record<string, Handler> = {
           // provider's refusal quoted.
           ...(r.status === "failed"
             ? { detail: failureReason(new Error(r.error)) }
-            : typeof line === "string"
-              ? { detail: line }
-              : {}),
+            : r.status === "completed" &&
+                r.workflow === "call" &&
+                typeof (r.output as { said?: unknown })?.said === "string"
+              ? // A call's run completes whether or not the call happened: what the
+                // speaker said about it ("Luigi's didn't answer") is its result.
+                { detail: (r.output as { said: string }).said }
+              : typeof line === "string"
+                ? { detail: line }
+                : {}),
           due: label?.due_at ? Date.parse(label.due_at) : null,
           updatedAt: r.createdAt,
         };
