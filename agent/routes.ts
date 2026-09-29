@@ -1,11 +1,22 @@
 import { type RouteHandler, type RouteRequest, routeResponse } from "@alexkroman1/aai";
 import { isToolFailure } from "@alexkroman1/aai/utils";
+import { MIN_APP_SEARCH } from "./app-search.ts";
+import { connectLink, disconnectApp, listApps } from "./apps.ts";
 import { geocode } from "./google.ts";
 import { createLinkCode, linkStatus } from "./link.ts";
 import { addMemories, allMemories, forgetMemory, updateMemory } from "./memory.ts";
-import { readProfile, writeProfile } from "./profile.ts";
-import { call, remind, research } from "./shared.ts";
+import { normalizeEmail, readProfile, writeProfile } from "./profile.ts";
+import { appEvent, appJob, call, emailResult, remind, research } from "./shared.ts";
 import { rest } from "./supabase.ts";
+import {
+  eventText,
+  firstDelivery,
+  type TriggerEvent,
+  unwatch,
+  verifyWebhook,
+  watches,
+  watchFor,
+} from "./watches.ts";
 import { failureReason } from "./workflows/research.ts";
 
 // What the page's sidebar reads and edits, as the agent's own JSON endpoints under /api
@@ -38,6 +49,13 @@ function client(req: RouteRequest): string {
   return req.clientId;
 }
 
+/** An app's slug from the path, e.g. `gmail`: Composio's toolkit names. */
+function app(req: RouteRequest): string {
+  const slug = req.params.app ?? "";
+  if (!/^[a-z0-9_-]{1,64}$/.test(slug)) throw new BadRequest("not an app name");
+  return slug;
+}
+
 const enc = encodeURIComponent;
 
 /** A handler whose BadRequest is answered 400 with its reason, rather than a 500. */
@@ -52,6 +70,11 @@ function guard(handler: Handler): Handler {
   };
 }
 
+/** Whether an appEvent run said something (its output is `{ told }`). */
+function told(output: unknown): boolean {
+  return (output as { told?: unknown } | undefined)?.told === true;
+}
+
 /** Finished runs stay in the Running panel this long, so a reminder that just rang shows it. */
 export const RECENTLY_FINISHED_MS = 10 * 60 * 1000;
 
@@ -63,12 +86,20 @@ const handlers: Record<string, Handler> = {
       name: p.name ?? "",
       home_address: p.home_address ?? "",
       phone_last4: p.phone ? p.phone.slice(-4) : "",
+      email: p.email ?? "",
     };
   },
   "PUT /profile": async (req, ctx) => {
     const name = field(req.body, "name", 80);
     const address = field(req.body, "home_address", 300);
+    const email = field(req.body, "email", 254);
     if (name !== undefined) await writeProfile(ctx, { name: name || null });
+    if (email !== undefined) {
+      // The page is the one place it is set (profile.ts `email`).
+      const valid = email ? normalizeEmail(email) : null;
+      if (valid === undefined) throw new BadRequest("That isn't an email address.");
+      await writeProfile(ctx, { email: valid });
+    }
     if (address === "") await writeProfile(ctx, { home_address: null, home_coords: null });
     else if (address !== undefined) {
       // As update_profile saves it: Google's formatting, so a wrong match is visible.
@@ -187,9 +218,14 @@ const handlers: Record<string, Handler> = {
         ctx.workflows.find(remind, id),
         ctx.workflows.find(research, id),
         ctx.workflows.find(call, id),
+        ctx.workflows.find(appJob, id),
+        ctx.workflows.find(appEvent, id),
+        ctx.workflows.find(emailResult, id),
       ])
     )
       .flat()
+      // An app event that wasn't one they wanted was judged and dropped: not a task.
+      .filter((r) => !(r.workflow === "appEvent" && r.status === "completed" && !told(r.output)))
       .filter(
         (r) =>
           r.status === "pending" ||
@@ -201,7 +237,7 @@ const handlers: Record<string, Handler> = {
       runs.map(async (r) => {
         // Research narrates its progress; a line lost to a restart just isn't shown.
         const line =
-          r.workflow === "research" && r.status === "running"
+          (r.workflow === "research" || r.workflow === "appJob") && r.status === "running"
             ? await ctx.workflows.lastLine(r.runId).catch(() => undefined)
             : undefined;
         return {
@@ -236,6 +272,70 @@ const handlers: Record<string, Handler> = {
       return routeResponse(404, { error: "no such task on this speaker" });
     }
     return { cancelled: await ctx.workflows.cancel(runId) };
+  },
+
+  // --- Apps: the accounts this speaker acts on (apps.ts, Composio) -----------------------
+  // Connected ones, or the catalog matching ?search=.
+  "GET /apps": async (req, ctx) => {
+    const search = req.query.search?.trim().slice(0, 100);
+    // Composio refuses a search under MIN_APP_SEARCH characters: nothing matches yet.
+    if (search && search.length < MIN_APP_SEARCH) return { apps: [] };
+    return {
+      apps: await listApps(ctx, client(req), search ? { search } : { connectedOnly: true }),
+    };
+  },
+  // Composio's hosted Connect Link for one app. The page opens it and comes back to
+  // `returnTo`, its own address.
+  "POST /apps/:app/connect": async (req, ctx) => {
+    const returnTo = field(req.body, "returnTo", 2000);
+    if (!returnTo || !/^https?:\/\//.test(returnTo))
+      throw new BadRequest("returnTo: the page's http(s) address");
+    return { url: await connectLink(ctx, client(req), app(req), returnTo) };
+  },
+  "DELETE /apps/:app": async (req, ctx) => ({
+    disconnected: await disconnectApp(ctx, client(req), app(req)),
+  }),
+  // What the speaker was asked to tell them about (watches.ts), and stopping one.
+  "GET /watches": async (req, ctx) => ({
+    watches: (await watches(ctx, client(req))).map((w) => ({
+      id: w.trigger_id,
+      app: w.app,
+      instruction: w.instruction,
+      createdAt: w.created_at,
+    })),
+  }),
+  "DELETE /watches/:id": async (req, ctx) => ({
+    stopped: await unwatch(ctx, client(req), req.params.id ?? ""),
+  }),
+
+  // --- Composio's webhook: events from watched apps --------------------------------------
+  // Not the page's: Composio POSTs every trigger event here (watches.ts), signed with the
+  // project's webhook secret. The one route a stranger can reach on a hosted server, so
+  // nothing happens before the signature checks out, and an event only counts when its
+  // trigger is a watch of the user it claims to be for.
+  "POST /composio/webhook": async (req, ctx) => {
+    const secret = ctx.env.COMPOSIO_WEBHOOK_SECRET?.trim();
+    if (!secret) return routeResponse(503, { error: "COMPOSIO_WEBHOOK_SECRET is not set" });
+    if (req.rawBody === undefined || !(await verifyWebhook(secret, req.headers, req.rawBody)))
+      return routeResponse(401, { error: "bad signature" });
+    const event = req.body as TriggerEvent;
+    // Other project events (a connection expiring) arrive here too: acknowledged, unused.
+    if (event.type !== "composio.trigger.message") return { ignored: event.type };
+    const w = await watchFor(ctx, event);
+    if (!w) return { ignored: "no such watch" };
+    if (!(await firstDelivery(ctx, event.id, w.trigger_id))) return { duplicate: true };
+    await ctx.workflows.start(
+      appEvent,
+      {
+        clientId: w.client_id,
+        instruction: w.instruction,
+        app: w.app,
+        trigger: w.trigger_slug,
+        event: eventText(event.data),
+      },
+      { key: w.client_id, label: w.instruction },
+    );
+    return { started: true };
   },
 
   // --- Linking a browser to a speaker (link.ts) ------------------------------------------

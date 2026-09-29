@@ -1,4 +1,5 @@
 import { type ReactNode, useCallback, useEffect, useState } from "react";
+import { MIN_APP_SEARCH } from "../app-search.ts";
 import { VERBATIM_WINDOW_MS } from "../history-window.ts";
 import { api } from "./api.ts";
 import { browserId, linkedSpeaker, setLinkedSpeaker } from "./client-id.ts";
@@ -25,6 +26,9 @@ export function Sidebar(props: {
       </Panel>
       <Panel title="Link to a speaker">
         <Link endSession={props.endSession} />
+      </Panel>
+      <Panel title="Apps">
+        <Apps />
       </Panel>
       <Panel title="Running" open>
         <Tasks />
@@ -78,13 +82,13 @@ function Failure({ error }: { error: string | undefined }) {
 
 // --- Household profile ------------------------------------------------------------------
 
-type ProfileData = { name: string; home_address: string; phone_last4: string };
+type ProfileData = { name: string; home_address: string; phone_last4: string; email: string };
 
 function Profile() {
   const { data, error, reload } = useApi<ProfileData>("/profile");
   const [saving, setSaving] = useState<string>();
   const [failed, setFailed] = useState<string>();
-  const save = (field: "name" | "home_address", value: string) => {
+  const save = (field: "name" | "home_address" | "email", value: string) => {
     if (!data || value.trim() === data[field]) return;
     setSaving(field);
     api("PUT", "/profile", { [field]: value })
@@ -111,6 +115,13 @@ function Profile() {
         placeholder="e.g. 123 Main St, Springfield"
         busy={saving === "home_address"}
         onSave={(v) => save("home_address", v)}
+      />
+      <Field
+        label="Email (where the speaker emails results, from your connected Gmail)"
+        value={data.email}
+        placeholder="you@example.com"
+        busy={saving === "email"}
+        onSave={(v) => save("email", v)}
       />
       <p className="text-xs opacity-60">
         {data.phone_last4
@@ -225,6 +236,159 @@ function Link({ endSession }: { endSession: () => void }) {
       </button>
       <Failure error={error} />
     </>
+  );
+}
+
+// --- Apps -------------------------------------------------------------------------------
+
+type AppRow = { slug: string; name: string; logo: string; description: string; connected: boolean };
+
+/**
+ * The accounts this speaker acts on (apps.ts). Connecting opens Composio's own page in a
+ * new tab, which signs in to the app and comes back here; the list is polled so the
+ * connection shows up without a reload.
+ */
+function Apps() {
+  const connected = useApi<{ apps: AppRow[] }>("/apps", 5000);
+  const [search, setSearch] = useState("");
+  const [found, setFound] = useState<AppRow[]>();
+  const [busy, setBusy] = useState<string>();
+  const [failed, setFailed] = useState<string>();
+  const fail = (e: unknown) => setFailed(e instanceof Error ? e.message : String(e));
+
+  useEffect(() => {
+    const q = search.trim();
+    // Composio searches from MIN_APP_SEARCH letters; fewer shows the hint below.
+    if (q.length < MIN_APP_SEARCH) {
+      setFound(undefined);
+      return;
+    }
+    const id = setTimeout(() => {
+      api<{ apps: AppRow[] }>("GET", `/apps?search=${encodeURIComponent(q)}`)
+        .then(({ apps }) => setFound(apps))
+        .catch((e: unknown) => setFailed(e instanceof Error ? e.message : String(e)));
+    }, 300);
+    return () => clearTimeout(id);
+  }, [search]);
+
+  const connect = (slug: string) => {
+    // Opened now, in the click, so a popup blocker lets it through; pointed at the link
+    // once the server has made it.
+    const tab = window.open("", "_blank");
+    setBusy(slug);
+    api<{ url: string }>("POST", `/apps/${slug}/connect`, { returnTo: location.href })
+      .then(({ url }) => {
+        if (tab) tab.location.href = url;
+        else location.href = url;
+        setFailed(undefined);
+      })
+      .catch((e: unknown) => {
+        tab?.close();
+        fail(e);
+      })
+      .finally(() => setBusy(undefined));
+  };
+  const disconnect = (slug: string) => {
+    setBusy(slug);
+    api("DELETE", `/apps/${slug}`)
+      .then(() => setFailed(undefined))
+      .catch(fail)
+      .finally(() => {
+        setBusy(undefined);
+        connected.reload();
+      });
+  };
+
+  const isConnected = new Set(connected.data?.apps.map((a) => a.slug));
+  const row = (a: AppRow) => (
+    <li key={a.slug} className="flex gap-2 items-center">
+      <img src={a.logo} alt="" className="w-5 h-5 rounded shrink-0" />
+      <span className="text-sm flex-1 min-w-0 truncate" title={a.description}>
+        {a.name}
+      </span>
+      {isConnected.has(a.slug) ? (
+        <button
+          type="button"
+          className={small}
+          disabled={busy === a.slug}
+          onClick={() => disconnect(a.slug)}
+        >
+          Disconnect
+        </button>
+      ) : (
+        <button
+          type="button"
+          className={small}
+          disabled={busy === a.slug}
+          onClick={() => connect(a.slug)}
+        >
+          Connect
+        </button>
+      )}
+    </li>
+  );
+
+  return (
+    <>
+      <p className="text-xs opacity-60">
+        Accounts this speaker can use, e.g. “what's on my calendar” or “email Sam I'm late”.
+      </p>
+      {connected.data &&
+        (connected.data.apps.length ? (
+          <ul className="flex flex-col gap-2">{connected.data.apps.map(row)}</ul>
+        ) : (
+          <p className="text-xs opacity-60">Nothing connected yet.</p>
+        ))}
+      <input
+        className={input}
+        value={search}
+        placeholder="Find an app to connect, e.g. Gmail"
+        onChange={(e) => setSearch(e.target.value)}
+      />
+      {search.trim() && search.trim().length < MIN_APP_SEARCH && (
+        <p className="text-xs opacity-60">Keep typing: at least {MIN_APP_SEARCH} letters.</p>
+      )}
+      {found && (
+        <ul className="flex flex-col gap-2">
+          {found.length ? (
+            found.filter((a) => !isConnected.has(a.slug)).map(row)
+          ) : (
+            <li className="text-xs opacity-60">No app by that name.</li>
+          )}
+        </ul>
+      )}
+      <Watches />
+      <Failure error={failed ?? connected.error} />
+    </>
+  );
+}
+
+type WatchRow = { id: string; app: string; instruction: string; createdAt: string };
+
+/** What the speaker was asked to tell them about ("tell me when Sam emails"), to stop. */
+function Watches() {
+  const { data, reload } = useApi<{ watches: WatchRow[] }>("/watches", 15_000);
+  if (!data?.watches.length) return null;
+  return (
+    <section className="flex flex-col gap-1">
+      <h3 className="text-xs font-bold">Telling you when</h3>
+      <ul className="flex flex-col gap-2">
+        {data.watches.map((w) => (
+          <li key={w.id} className="flex gap-2 items-start justify-between">
+            <span className="text-sm [overflow-wrap:anywhere]">
+              {w.instruction} <span className="text-xs opacity-60">({w.app})</span>
+            </span>
+            <button
+              type="button"
+              className={`${small} shrink-0`}
+              onClick={() => api("DELETE", `/watches/${w.id}`).finally(reload)}
+            >
+              Stop
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 

@@ -2,7 +2,7 @@ import { agent } from "@alexkroman1/aai";
 import { assemblyAIStt } from "@alexkroman1/aai/stt";
 import { sessionContext } from "./context.ts";
 import { routes } from "./routes.ts";
-import { call, memorize, remind, research } from "./shared.ts";
+import { appEvent, appJob, call, emailResult, memorize, remind, research } from "./shared.ts";
 
 // The whole agent: this file and `system-prompt.md` beside it, which is found
 // by WHERE IT SITS rather than imported.
@@ -53,10 +53,13 @@ export default agent({
   // and pushes the spoken reminder to the speaker's inbox socket. Under `aai dev` without a
   // DATABASE_URL a pending reminder lives only as long as the dev server.
   // Deep research (tools/deep_research.ts): minutes of searching and reading, so a run
-  // that texts the report and announces a summary on the speaker when it is done.
+  // that says a summary on the speaker when it is done, and texts the report if asked.
   // After-the-conversation memory (workflows/memorize.ts): the session's turns go to mem0,
   // which keeps what lasts, and are digested into the speaker's compacted history.
-  workflows: { remind, research, memorize, call },
+  // The household's apps (apps.ts, watches.ts), all as runs because a Composio action is
+  // round trips too slow for a turn: appJob does every app task and says the answer,
+  // appEvent judges and says an event from a watched app, emailResult sends email_me.
+  workflows: { remind, research, memorize, call, appEvent, appJob, emailResult },
   // Every connect of a speaker (its ?client= id) is ONE long conversation: the SDK
   // replays the last few hours verbatim, and this adds everything older, compacted, plus
   // all that mem0 holds about the household (context.ts). Fixed for the session.
@@ -83,5 +86,7 @@ export default agent({
     "TEXTBELT_KEY",
     "SMS_TO_PHONE",
     "MEM0_API_KEY",
+    // The household's apps (apps.ts): find_app_action, run_app_action and the page's Apps.
+    "COMPOSIO_API_KEY",
   ],
 });

@@ -61,7 +61,7 @@ describe("withSources", () => {
 });
 
 describe("deep_research", () => {
-  test("starts a run with this session's speaker and phone, and says how it will arrive", async () => {
+  test("starts a run that only says the results on this session's speaker", async () => {
     const start = vi.fn(async () => "wrun_1");
     const ctx = createToolContext({
       clientId: "kitchen",
@@ -69,24 +69,47 @@ describe("deep_research", () => {
       workflows: createStubWorkflows({ start }),
     });
     const result = await runTool(deepResearch, { topic: "heat pumps for an old house" }, ctx);
-    expect(result).toEqual({ started: true, delivery: "texted, and announced on the speaker" });
+    expect(result).toEqual({ started: true, delivery: "said on the speaker" });
     expect(start).toHaveBeenCalledWith(
       research,
       {
         topic: "heat pumps for an old house",
         clientId: "kitchen",
         phone: "+15555550123",
+        text: false,
       },
       { key: "kitchen", label: "heat pumps for an old house" },
     );
   });
 
-  test("from a browser tab there is no speaker to announce on, so it is only texted", async () => {
-    const ctx = createToolContext({ workflows: createStubWorkflows({ start: async () => "w" }) });
-    expect(await runTool(deepResearch, { topic: "heat pumps" }, ctx)).toEqual({
+  test("texts the report too when they asked for a text", async () => {
+    const start = vi.fn(async () => "wrun_1");
+    const ctx = createToolContext({
+      clientId: "kitchen",
+      workflows: createStubWorkflows({ start }),
+    });
+    expect(await runTool(deepResearch, { topic: "heat pumps", text: true }, ctx)).toEqual({
+      started: true,
+      delivery: "said on the speaker, and texted",
+    });
+    expect(start).toHaveBeenCalledWith(
+      research,
+      expect.objectContaining({ text: true }),
+      expect.anything(),
+    );
+  });
+
+  test("from a browser tab it texts only when asked, and otherwise starts nothing", async () => {
+    const start = vi.fn(async () => "w");
+    const ctx = createToolContext({ workflows: createStubWorkflows({ start }) });
+    expect(await runTool(deepResearch, { topic: "heat pumps", text: true }, ctx)).toEqual({
       started: true,
       delivery: "texted",
     });
+    start.mockClear();
+    const refused = await runTool(deepResearch, { topic: "heat pumps" }, ctx);
+    expect(JSON.stringify(refused)).toContain("Ask whether to text them");
+    expect(start).not.toHaveBeenCalled();
   });
 });
 

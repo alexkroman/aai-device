@@ -17,8 +17,8 @@ export default tool({
   description:
     "Send a text message to the owner's own phone (the number is configured, never chosen " +
     "here). Use it for what is too long or too exact to say: directions, a list, a recipe, " +
-    'several search results, an address or phone number. Offer first ("Want me to text you ' +
-    "that?\") and send when they agree, or when they ask to be texted. Links can't be sent " +
+    "several search results, an address or phone number. Only when they ask to be texted: " +
+    "never offer or send one unasked, the speaker says answers out loud. Links can't be sent " +
     "yet: describe where to find something instead. Returns whether it was sent.",
   inputSchema: z.object({
     message: z

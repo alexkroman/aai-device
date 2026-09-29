@@ -1,6 +1,9 @@
 import { workflow } from "@alexkroman1/aai";
 import { z } from "zod";
+import { appEventFlow } from "./workflows/app-event.ts";
+import { appJobFlow } from "./workflows/app-job.ts";
 import { callFlow } from "./workflows/call.ts";
+import { emailFlow } from "./workflows/email.ts";
 import { memorizeFlow } from "./workflows/memorize.ts";
 import { remindFlow } from "./workflows/remind.ts";
 import { researchFlow } from "./workflows/research.ts";
@@ -20,11 +23,12 @@ export const remind = workflow({
 });
 
 export const research = workflow({
-  description: "Research a topic in depth, text the report, and announce it on the speaker",
+  description: "Research a topic in depth, say it on the speaker, and text it if asked",
   input: z.object({
     topic: z.string().describe("What to research, as they asked it"),
     clientId: z.string().optional().describe("The speaker to announce it on, if any"),
     phone: z.string().optional().describe("The number the client reported; else SMS_TO_PHONE"),
+    text: z.boolean().optional().describe("Whether they asked for the report by text"),
   }),
   run: researchFlow,
 });
@@ -36,6 +40,37 @@ export const call = workflow({
     clientId: z.string().describe("The speaker that asked, told the outcome"),
   }),
   run: callFlow,
+});
+
+export const appEvent = workflow({
+  description: "Judge an event from a watched app and say it on the speaker if it was wanted",
+  input: z.object({
+    clientId: z.string().describe("The speaker that asked to be told (its ?client= id)"),
+    instruction: z.string().describe("What they asked to be told about, in their words"),
+    app: z.string().describe("The app it came from, e.g. gmail"),
+    trigger: z.string().describe("The Composio trigger that fired"),
+    event: z.string().describe("The event, compacted (watches.ts eventText)"),
+  }),
+  run: appEventFlow,
+});
+
+export const appJob = workflow({
+  description: "Do a big task on the household's apps and say the answer on the speaker",
+  input: z.object({
+    task: z.string().describe("The task, with every detail they gave"),
+    clientId: z.string().describe("The speaker it runs for: its apps, and where it's said"),
+  }),
+  run: appJobFlow,
+});
+
+export const emailResult = workflow({
+  description: "Email something to the household's saved address, from the speaker's Gmail",
+  input: z.object({
+    clientId: z.string().describe("The speaker whose connected Gmail sends it"),
+    subject: z.string().describe("The subject line"),
+    body: z.string().describe("The email, written to be read"),
+  }),
+  run: emailFlow,
 });
 
 export const memorize = workflow({

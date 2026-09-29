@@ -32,7 +32,7 @@ DEVICE_STAMP := $(FW)/test/device/.last-pass
 # The local SDK checkout agent/package.json links against. Keep the two in step.
 AAI_SDK   ?= $(HOME)/Code/aai/agent-builtin-api-tools
 
-.PHONY: check require-idf lint lint-format lint-tidy lint-cppcheck lint-python lint-agent \
+.PHONY: composio-webhook check require-idf lint lint-format lint-tidy lint-cppcheck lint-python lint-agent \
         build-firmware test-host test-fuzz test-coverage check-contract check-size test-agent \
         device-freshness test-device test-e2e format agent caller supabase flash monitor
 
@@ -175,13 +175,20 @@ endif
 agent: export AAI_RUN_CODE := deno
 agent:
 	cd $(AAI_SDK) && pnpm exec turbo run build --filter=@alexkroman1/aai-cli... --output-logs=errors-only
-	env="$$(supabase/up.sh)" && eval "$$env" && cd agent && AAI_DEV_HOST=0.0.0.0 node $(AAI_SDK)/packages/aai-cli/bin.mjs dev -p 3000
+	env="$$(supabase/up.sh)" && eval "$$env" && AAI_SDK=$(AAI_SDK) agent/run.sh
 
 # The agent that places the household's phone calls (caller/), behind a Cloudflare quick
 # tunnel Twilio can reach; its URL is published to the speaker while it runs. Run beside
 # `make agent`. TWILIO_* live in agent/.env: the speaker dials, this agent talks.
 caller:
 	env="$$(supabase/up.sh)" && eval "$$env" && AAI_SDK=$(AAI_SDK) caller/run.sh
+
+# Point the Composio project's trigger webhook at this agent's public URL, and save its
+# signing secret in agent/.env (agent/composio-webhook.mjs). Hosted only: locally,
+# `make agent` forwards trigger events itself with `composio dev listen` (agent/run.sh).
+composio-webhook:
+	@test -n "$(URL)" || { echo "usage: make composio-webhook URL=https://<public host>"; exit 2; }
+	node agent/composio-webhook.mjs "$(URL)"
 
 # Start the stack on its own (Studio at http://127.0.0.1:55423). `supabase stop` stops it.
 supabase:

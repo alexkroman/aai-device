@@ -23,7 +23,19 @@ export type ProfileField = keyof typeof PROFILE_FIELDS;
 export type Profile = Partial<Record<ProfileField, string>> & {
   /** "lat,lng" of home_address, saved with it so a lookup near home costs no geocode. */
   home_coords?: string;
+  /**
+   * Where email_me sends (email.ts). Set on the page only, never by voice: an address
+   * spelled aloud is easily misheard, and one anyone in the room could change would let
+   * them redirect what the speaker emails.
+   */
+  email?: string;
 };
+
+/** An email address as the page saves it, or undefined when it can't be one. */
+export function normalizeEmail(typed: string): string | undefined {
+  const email = typed.trim().toLowerCase();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && email.length <= 254 ? email : undefined;
+}
 
 let cached: Profile = {};
 let cachedAt = 0;
@@ -92,6 +104,7 @@ export function describeProfile(profile: Profile): string {
     profile.name && `Their name is ${profile.name}.`,
     profile.home_address && `Their home address is ${profile.home_address}.`,
     profile.phone && `Texts go to their number ending in ${profile.phone.slice(-4)}.`,
+    profile.email && "They have an email address saved, so email_me can email them.",
   ].filter(Boolean);
   return lines.length ? `What you know about the household: ${lines.join(" ")}` : "";
 }

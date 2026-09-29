@@ -30,3 +30,6 @@ npm-debug.log*
 
 # typescript
 *.tsbuildinfo
+
+# trigger events forwarded by `composio dev listen` (agent/run.sh)
+.composio-listen.log

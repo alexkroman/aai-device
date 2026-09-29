@@ -9,6 +9,18 @@ import { readSetting } from "./ui/settings.ts";
 // itself talks to the same /websocket; this page only adds what a speaker can't do,
 // typing and a transcript. Mount only, so an edit to a component fast-refreshes (see
 // vite.config.ts).
+//
+// Connecting an app (sidebar.tsx) opens Composio in a tab of its own, which comes back
+// here with ?connected_account_id=. That tab has done its job: the page that opened it
+// polls the app list. Left open it is one more live copy of the page, and each one
+// played every notice aloud. The close only works on a tab a script opened; otherwise
+// the query is dropped so a reload doesn't bring it back.
+const back = new URL(location.href);
+if (back.searchParams.has("connected_account_id")) {
+  window.close();
+  back.search = "";
+  history.replaceState(null, "", back);
+}
 mountClient({
   component: App,
   name: "Home Speaker",

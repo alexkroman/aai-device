@@ -71,9 +71,11 @@ describe("quickstart-agent template", () => {
     );
     expect(Object.keys(deployedDef.tools ?? {}).sort()).toEqual([
       "air_quality",
+      "app_task",
       "cancel_reminders",
       "confirm_phone",
       "deep_research",
+      "email_me",
       "forget",
       "link_browser",
       "place_call",

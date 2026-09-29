@@ -6,7 +6,7 @@
 //
 // Changed for a speaker: the request was spoken to a device across the room, the answer
 // is said out loud on it (and has to fit a notice, under a minute of audio), and the
-// report goes by text message, so it is plain text rather than markdown.
+// report goes by text message when they ask, so it is plain text rather than markdown.
 
 /** Turn a spoken request into something a researcher can be held to. */
 export const BRIEF_SYSTEM = [
@@ -80,8 +80,9 @@ export function reportSystem(maxChars: number): string {
 /** What the speaker says when the research is done. */
 export const SPOKEN_SUMMARY_SYSTEM = [
   "You reduce a research report to what a smart speaker says out loud when the",
-  "research someone asked for earlier is finished. Three short sentences at most,",
-  "under 60 words. No markdown, lists, citation markers or URLs.",
+  "research someone asked for earlier is finished. It is usually all they get, so",
+  "give the findings that matter, in five short sentences at most and under 100",
+  "words. No markdown, lists, citation markers or URLs.",
   "Lead with the answer, not with what was done. If the research was",
   "inconclusive, say that first and in those words.",
 ].join(" ");
