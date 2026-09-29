@@ -7,6 +7,9 @@ import { appendTurn, callGreeting, claimCall, finishCall, taskInstructions } fro
 // speaker, because this server is reachable from the internet through a tunnel (make
 // caller): nothing of the household's (profile, memories, the /api the page edits) lives
 // here, and any session that isn't an approved call is refused before a word is said.
+// A lost turn never stops the call, but it should leave a trace.
+const logLost = (err: unknown) => console.warn("caller: transcript append failed", err);
+
 export default agent({
   name: "Home Speaker Caller",
   description: "Places phone calls the household approved, on its behalf",
@@ -36,10 +39,10 @@ export default agent({
   // The transcript, turn by turn as it is said, so a dropped call still has one.
   events: {
     "user-transcript.committed": (e, ctx) => {
-      appendTurn(ctx, ctx.sessionId, "them", e.text).catch(() => {});
+      appendTurn(ctx, ctx.sessionId, "them", e.text).catch(logLost);
     },
     "agent-transcript.committed": (e, ctx) => {
-      if (!e.recovery) appendTurn(ctx, ctx.sessionId, "assistant", e.text).catch(() => {});
+      if (!e.recovery) appendTurn(ctx, ctx.sessionId, "assistant", e.text).catch(logLost);
     },
   },
   onSessionEnd: async ({ sessionId, env }) => {
