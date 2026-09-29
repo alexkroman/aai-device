@@ -1,4 +1,5 @@
-# One entry point for every check. Run from an ESP-IDF shell (`. ~/esp/esp-idf-v5.5/export.sh`).
+# One entry point for every check. Any shell works: the targets that need ESP-IDF load it
+# themselves (IDF below) unless it is already loaded.
 #
 #   make check        EVERYTHING that doesn't need the board: lint, firmware builds, host
 #                     tests, fuzzing, coverage floor, SDK contract, memory budget, agent tests.
@@ -10,6 +11,14 @@
 # Rule: a check that isn't reachable from `make check` will rot. Add new ones there.
 
 FW        := firmware
+# export.sh is bash/zsh; macOS /bin/sh is bash in POSIX mode, which it does not support.
+SHELL     := /bin/bash
+# ESP-IDF, loaded per recipe line: make runs every line in a fresh shell, so it cannot
+# change the one it was started from, but it can source export.sh in front of an idf.py.
+# Empty in a shell that already ran it, so nothing is loaded twice.
+IDF_EXPORT ?= $(HOME)/esp/esp-idf-v5.5/export.sh
+IDF       := $(if $(IDF_PATH),,{ . "$(IDF_EXPORT)" >/dev/null 2>&1 || \
+               { echo "loading ESP-IDF failed: . $(IDF_EXPORT)" >&2; false; }; } &&)
 LLVM      := $(shell brew --prefix llvm 2>/dev/null)/bin
 IDF_PY    := $(or $(IDF_PYTHON_ENV_PATH),$(HOME)/.espressif/python_env/idf5.5_py3.11_env)/bin/python
 SYSROOT   := --extra-arg=-isysroot$(shell xcrun --show-sdk-path 2>/dev/null)
@@ -32,7 +41,8 @@ check: require-idf lint build-firmware test-host test-fuzz test-coverage check-c
 	@printf '\n✅ make check passed\n'
 
 require-idf:
-	@test -n "$$IDF_PATH" || { echo "Run from an ESP-IDF shell: . ~/esp/esp-idf-v5.5/export.sh"; exit 1; }
+	@test -n "$$IDF_PATH" || test -f "$(IDF_EXPORT)" || \
+	  { echo "ESP-IDF not found at $(IDF_EXPORT): install it or set IDF_EXPORT=…/export.sh"; exit 1; }
 
 # ---- lint -------------------------------------------------------------------
 
@@ -65,12 +75,12 @@ lint-agent:
 
 # Both apps: production firmware and the on-device test app (-Werror on our code).
 build-firmware: require-idf
-	cd $(FW) && idf.py build >/dev/null
-	cd $(FW)/test/device && idf.py build >/dev/null
+	cd $(FW) && $(IDF) idf.py build >/dev/null
+	cd $(FW)/test/device && $(IDF) idf.py build >/dev/null
 	@echo "firmware + test app build clean"
 
 check-size: build-firmware
-	cd $(FW) && idf.py size --format json2 --output-file build/size.json >/dev/null
+	cd $(FW) && $(IDF) idf.py size --format json2 --output-file build/size.json >/dev/null
 	python3 $(FW)/tools/check_size.py $(FW)/build/size.json $(FW)/build/aai_device.bin $(FW)/partitions.csv
 
 check-contract:
@@ -130,10 +140,10 @@ device-freshness:
 # ---- hardware ---------------------------------------------------------------
 
 test-device: require-idf
-	cd $(FW)/test/device && $(IDF_PY) -m pytest && touch .last-pass
+	cd $(FW)/test/device && $(IDF) $(IDF_PY) -m pytest && touch .last-pass
 
 test-e2e: require-idf
-	cd $(FW)/test/e2e && $(IDF_PY) -m pytest
+	cd $(FW)/test/e2e && $(IDF) $(IDF_PY) -m pytest
 
 # ---- dev --------------------------------------------------------------------
 
@@ -170,7 +180,7 @@ supabase:
 	@supabase/up.sh >/dev/null
 
 flash: require-idf
-	cd $(FW) && idf.py build flash
+	cd $(FW) && $(IDF) idf.py build flash
 
 monitor: require-idf
-	cd $(FW) && idf.py monitor
+	cd $(FW) && $(IDF) idf.py monitor
