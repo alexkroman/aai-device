@@ -8,9 +8,9 @@ import {
 } from "@alexkroman1/aai/testing";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { appJob } from "./shared.ts";
-import appTask, { HANDOFF_LINE } from "./tools/app_task.ts";
+import appTask, { HANDOFF_LINE, TEXT_HANDOFF_LINE } from "./tools/app_task.ts";
 import { appEventFlow, tell } from "./workflows/app-event.ts";
-import { worker } from "./workflows/app-job.ts";
+import { announce, worker } from "./workflows/app-job.ts";
 import { NOTICE_SAMPLE_RATE } from "./workflows/remind.ts";
 
 // The background halves of the household's apps: app_task's run and the watch events the
@@ -27,10 +27,26 @@ describe("app_task", () => {
     const result = await runTool(appTask, { task: "summarize my last 50 emails" }, ctx);
     // The handoff line the agent says if it didn't already: the answer comes later, spoken.
     expect(result).toMatchObject({ started: true, say_if_not_said: HANDOFF_LINE });
+    expect(JSON.stringify(result)).toContain("nothing is texted");
     expect(start).toHaveBeenCalledWith(
       appJob,
-      { task: "summarize my last 50 emails", clientId: "kitchen" },
+      { task: "summarize my last 50 emails", clientId: "kitchen", text: false },
       { key: "kitchen", label: "summarize my last 50 emails" },
+    );
+  });
+
+  test("texts the answer only when they asked, and says so as it hands off", async () => {
+    const start = vi.fn(async () => "wrun_1");
+    const ctx = createToolContext({
+      clientId: "kitchen",
+      workflows: createStubWorkflows({ start }),
+    });
+    const result = await runTool(appTask, { task: "summarize #general", text: true }, ctx);
+    expect(result).toMatchObject({ started: true, say_if_not_said: TEXT_HANDOFF_LINE });
+    expect(start).toHaveBeenCalledWith(
+      appJob,
+      expect.objectContaining({ task: "summarize #general", text: true }),
+      expect.anything(),
     );
   });
 
@@ -94,5 +110,37 @@ describe("the appEvent workflow", () => {
       speech.restore();
       inbox.restore();
     }
+  });
+});
+
+describe("the appJob announcement", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  async function said(
+    input: Parameters<typeof announce>[1],
+    texted?: Parameters<typeof announce>[3],
+  ) {
+    vi.stubEnv("ASSEMBLYAI_API_KEY", "test-key");
+    const speech = stubSpeech({ pcmBytes: 3200 });
+    const inbox = stubClientInbox();
+    try {
+      await announce("wrun_2", input, "Three new messages.", texted);
+      return speech.calls[0]?.text;
+    } finally {
+      speech.restore();
+      inbox.restore();
+    }
+  }
+
+  test("an unasked run is only said, with no word of a text", async () => {
+    expect(await said({ task: "t", clientId: "kitchen" })).toBe("Three new messages.");
+  });
+
+  test("an asked run says whether the text went", async () => {
+    const input = { task: "t", clientId: "kitchen", text: true };
+    expect(await said(input, { sent: true })).toBe(
+      "Three new messages. I've texted it to you too.",
+    );
+    expect(await said(input, { sent: false })).toMatch(/couldn't text it to you/);
   });
 });

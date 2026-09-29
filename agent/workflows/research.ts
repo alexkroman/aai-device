@@ -84,7 +84,7 @@ const RESEARCH_BUDGET = 6;
  */
 export const REPORT_BODY_CHARS = 650;
 /** A retried text is a second text: few attempts, unlike the announcement's. */
-const TEXT_STEP = { maxAttempts: 3 } satisfies StepOptions;
+export const TEXT_STEP = { maxAttempts: 3 } satisfies StepOptions;
 
 export type ResearchInput = {
   topic: string;
@@ -300,7 +300,10 @@ export type Texted = { sent: true } | { sent: false; why?: string };
  * the owner's (SMS_TO_PHONE) or listed in SMS_ALLOWED_PHONES; anything else falls back
  * to the owner. The same rule text_me applies.
  */
-export async function textReport(input: ResearchInput, report: string): Promise<Texted> {
+export async function textReport(
+  input: Pick<ResearchInput, "phone">,
+  report: string,
+): Promise<Texted> {
   const to = allowedSmsRecipient(input.phone, {
     SMS_TO_PHONE: stepEnv("SMS_TO_PHONE"),
     SMS_ALLOWED_PHONES: stepEnv("SMS_ALLOWED_PHONES"),

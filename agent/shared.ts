@@ -55,10 +55,12 @@ export const appEvent = workflow({
 });
 
 export const appJob = workflow({
-  description: "Do a big task on the household's apps and say the answer on the speaker",
+  description: "Do a task on the household's apps, say the answer, and text it if asked",
   input: z.object({
     task: z.string().describe("The task, with every detail they gave"),
     clientId: z.string().describe("The speaker it runs for: its apps, and where it's said"),
+    phone: z.string().optional().describe("The number the client reported; else SMS_TO_PHONE"),
+    text: z.boolean().optional().describe("Whether they asked for the answer by text"),
   }),
   run: appJobFlow,
 });

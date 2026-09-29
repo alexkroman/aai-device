@@ -154,7 +154,7 @@ describe("textReport", () => {
 
   test("texts an allowlisted number the client reported", async () => {
     const sent = textbelt();
-    expect(await textReport({ topic: "t", phone: "+15555550111" }, "The report.")).toEqual({
+    expect(await textReport({ phone: "+15555550111" }, "The report.")).toEqual({
       sent: true,
     });
     expect(sent()).toMatchObject({
@@ -166,7 +166,7 @@ describe("textReport", () => {
 
   test("a number the client made up is ignored: the owner gets it", async () => {
     const sent = textbelt();
-    await textReport({ topic: "t", phone: "+15555550999" }, "The report.");
+    await textReport({ phone: "+15555550999" }, "The report.");
     expect(sent().phone).toBe("+15555550100");
   });
 
@@ -174,14 +174,14 @@ describe("textReport", () => {
     vi.stubEnv("TEXTBELT_KEY", "k");
     vi.stubEnv("SMS_TO_PHONE", "");
     const fetched = installStubStepFetch(() => ({ body: { success: true } }));
-    expect(await textReport({ topic: "t" }, "r")).toEqual({ sent: false });
+    expect(await textReport({}, "r")).toEqual({ sent: false });
     expect(fetched.calls).toEqual([]);
   });
 
   test("links are taken out before Textbelt sees the report", async () => {
     const sent = textbelt();
     await textReport(
-      { topic: "t", phone: "+15555550111" },
+      { phone: "+15555550111" },
       "It works [1].\n\nSources:\n[1] https://example.com/heat-pumps",
     );
     expect(sent().message).toBe("It works [1].");
@@ -197,7 +197,7 @@ describe("textReport", () => {
           "Sorry, ability to send URLs via text is limited to verified accounts. Please go to https://textbelt.com/whitelist?key=test-key-123456 or email support.",
       },
     }));
-    const texted = await textReport({ topic: "t" }, "The report.");
+    const texted = await textReport({}, "The report.");
     expect(texted).toMatchObject({
       sent: false,
       why: expect.stringContaining("verified accounts"),

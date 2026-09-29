@@ -1,5 +1,6 @@
 import type { StepOptions, SubagentDef, WorkflowContext } from "@alexkroman1/aai";
 import { subagent, tool, toolFailure } from "@alexkroman1/aai";
+import { TEXTBELT_MAX_MESSAGE_CHARS } from "@alexkroman1/aai/channels";
 import {
   requireStepEnv,
   stepDelegate,
@@ -22,7 +23,7 @@ import {
 } from "../apps.ts";
 import { findTriggers, unwatch, WatchLimit, watch, watches } from "../watches.ts";
 import { DELIVER_ATTEMPTS, NOTICE_SAMPLE_RATE } from "./remind.ts";
-import { failureReason } from "./research.ts";
+import { failureReason, TEXT_STEP, type Texted, textReport } from "./research.ts";
 
 // EVERYTHING the speaker does on the household's apps, from "what's on my calendar" to
 // "summarize my last 50 emails" to "tell me when Sam emails": a Composio action is round
@@ -31,12 +32,16 @@ import { failureReason } from "./research.ts";
 // speaker's BACKGROUND Composio session (apps.ts), with the app tools, the watch tools
 // and Composio's Python workbench, where it can fetch hundreds of items and reduce them
 // without any of it passing through its own context. The answer is then SAID on the
-// speaker, the way a reminder is: nothing is texted.
+// speaker, the way a reminder is, and texted as well only when they asked for a text.
 
 export type AppJobInput = {
   task: string;
   /** The speaker it runs for (its ?client= id): its Composio user and where it's announced. */
   clientId: string;
+  /** The number the session's client reported; absent means SMS_TO_PHONE. */
+  phone?: string | undefined;
+  /** They asked for the answer by text. Never texted otherwise. */
+  text?: boolean | undefined;
 };
 
 /** Tool-calling steps the worker may take: a workbench job is a handful of short cells. */
@@ -73,10 +78,15 @@ export async function appJobFlow(input: AppJobInput, ctx: WorkflowContext) {
     // Its own step name, not the texted version's `writeUp`: a run journaled before the
     // change must not replay that step's old shape into this one.
     const said = await ctx.step("writeSpoken", () => writeSpoken(input.task, answer));
-    await ctx.step("announce", () => announce(runId, input, said), {
+    let texted: Texted = { sent: false };
+    if (input.text) {
+      const message = await ctx.step("writeText", () => writeText(input.task, answer));
+      texted = await ctx.step("text", () => textReport(input, message), TEXT_STEP);
+    }
+    await ctx.step("announce", () => announce(runId, input, said, texted), {
       maxAttempts: DELIVER_ATTEMPTS,
     });
-    return { task: input.task, said };
+    return { task: input.task, said, texted };
   } catch (err) {
     const why = failureReason(err);
     await ctx.step("announceFailure", () => announceFailure(runId, input, why), {
@@ -219,13 +229,39 @@ export async function writeSpoken(task: string, answer: string): Promise<string>
   });
 }
 
+export const TEXT_ANSWER_SYSTEM =
+  "Write a finished task's answer as one text message, to be read on a phone: the full " +
+  `substance in under ${TEXTBELT_MAX_MESSAGE_CHARS - 60} characters, short lines, no ` +
+  "markdown or links. Start with what it is, e.g. 'Your calendar today:'.";
+
+/** The answer as one text message, for a run they asked to be texted. */
+export async function writeText(task: string, answer: string): Promise<string> {
+  const text = await stepGenerateOrFail(`Task: ${task}\n\nAnswer:\n${answer}`, {
+    system: TEXT_ANSWER_SYSTEM,
+  });
+  return text.trim().slice(0, TEXTBELT_MAX_MESSAGE_CHARS);
+}
+
 /** Speak and push in ONE step, as reminders do: the run id makes a redelivery a repeat. */
-export async function announce(id: string, input: AppJobInput, said: string): Promise<void> {
+export async function announce(
+  id: string,
+  input: AppJobInput,
+  answer: string,
+  texted: Texted = { sent: false },
+): Promise<void> {
+  const delivery = texted.sent
+    ? " I've texted it to you too."
+    : texted.why
+      ? ` I couldn't text it to you: ${texted.why}`
+      : input.text
+        ? " I couldn't text it to you: texting isn't set up."
+        : "";
+  const said = `${answer}${delivery}`;
   const spoken = await stepSpeak(said, { sampleRate: NOTICE_SAMPLE_RATE });
   await stepNotifyClient(input.clientId, {
     id,
     event: "app",
-    data: { text: said, said },
+    data: { said },
     audio: spoken.pcm,
   });
 }
@@ -236,7 +272,7 @@ export async function announceFailure(id: string, input: AppJobInput, why: strin
   await stepNotifyClient(input.clientId, {
     id: `${id}:failed`,
     event: "app",
-    data: { text: said, said, failed: true },
+    data: { said, failed: true },
     audio: spoken.pcm,
   });
 }
