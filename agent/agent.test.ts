@@ -2,7 +2,12 @@
 import deployedDef from "virtual:aai/agent";
 import { assemblyAIPipeline, DEFAULT_SYSTEM_PROMPT } from "@alexkroman1/aai";
 import { assemblyAIStt } from "@alexkroman1/aai/stt";
-import { commandedBuiltins, createStubWorkflows, expectDeployable } from "@alexkroman1/aai/testing";
+import {
+  commandedBuiltins,
+  createStubWorkflows,
+  expectDeployable,
+  expectPromptBuiltinsDeclared,
+} from "@alexkroman1/aai/testing";
 import { assemblyAITts } from "@alexkroman1/aai/tts";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import agentDef from "./agent.ts";
@@ -102,16 +107,24 @@ describe("the speaker agent", () => {
     // could not notice the file going missing.
     const prompt = String(deployedDef.systemPrompt);
     expect(prompt).not.toBe(DEFAULT_SYSTEM_PROMPT);
+    // A custom tool of a builtin's name (tools/text_me.ts, tools/remember.ts) declares it.
+    expectPromptBuiltinsDeclared(deployedDef);
+    expect(commandedBuiltins({ systemPrompt: prompt }).sort()).toEqual([
+      "brave_search",
+      "calculate",
+      "open_meteo",
+      "remember",
+      "run_code",
+      "text_me",
+      "visit_webpage",
+    ]);
     const tools = Object.keys(deployedDef.tools ?? {});
-    // Not expectPromptBuiltinsDeclared: it reads "text_me" as the undeclared builtin,
-    // unaware tools/text_me.ts replaces it.
-    const builtins = commandedBuiltins({ systemPrompt: prompt }).filter((b) => !tools.includes(b));
-    expect(builtins.sort()).toEqual(["brave_search", "open_meteo", "run_code", "visit_webpage"]);
     const named = new Set(prompt.match(/\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/g) ?? []);
     // Words the prompt quotes from tool inputs and results, not tool names.
     for (const word of ["in_seconds", "read_back", "say_if_not_said"]) named.delete(word);
-    // The scan above only sees snake_case; these are named by a single word.
-    for (const word of ["calculate", "pollen", "stop", "remember", "recall", "forget"]) {
+    // The scan above only sees snake_case; these are named by a single word. The SDK
+    // finds calculate and remember itself, but not "recall only when" in plain prose.
+    for (const word of ["pollen", "stop", "recall", "forget"]) {
       expect(prompt).toMatch(new RegExp(`\\b${word}\\b`));
       named.add(word);
     }
