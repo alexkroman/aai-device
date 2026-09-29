@@ -42,7 +42,12 @@ export default agent({
     "google_places",
     "calculate",
     "visit_webpage",
-    "text_me",
+    // Model-written JavaScript, run in a zero-permission Deno sandbox (no network, files,
+    // env or subprocesses; 5 s): `make agent` sets AAI_RUN_CODE=deno. Without it the
+    // SDK refuses every call rather than run the code in this process.
+    "run_code",
+    // Not "text_me": tools/text_me.ts replaces it, with links taken out until the
+    // Textbelt key is verified to send them.
   ],
   // Reminders (tools/remind_me.ts): a durable run per reminder that sleeps until it is due
   // and pushes the spoken reminder to the speaker's inbox socket. Under `aai dev` without a

@@ -171,6 +171,8 @@ agent: export TEXTBELT_KEY := outbox
 agent: export SMS_TO_PHONE := +15555550100
 agent: export SMS_ALLOWED_PHONES := *
 endif
+# run_code's snippets run in `deno run` with no permissions (the SDK's local sandbox).
+agent: export AAI_RUN_CODE := deno
 agent:
 	cd $(AAI_SDK) && pnpm exec turbo run build --filter=@alexkroman1/aai-cli... --output-logs=errors-only
 	env="$$(supabase/up.sh)" && eval "$$env" && cd agent && AAI_DEV_HOST=0.0.0.0 node $(AAI_SDK)/packages/aai-cli/bin.mjs dev -p 3000

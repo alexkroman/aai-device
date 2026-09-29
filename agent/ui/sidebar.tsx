@@ -250,10 +250,16 @@ function Tasks() {
         <li key={t.runId} className="text-sm flex flex-col gap-0.5">
           <div className="flex justify-between gap-2">
             <span className="[overflow-wrap:anywhere]">{t.title}</span>
-            <span className="text-xs opacity-60 shrink-0">{t.status}</span>
+            <span
+              className={`text-xs shrink-0 ${t.status === "failed" ? "text-red-400" : "opacity-60"}`}
+            >
+              {t.status}
+            </span>
           </div>
           {(t.detail || t.due) && (
-            <span className="text-xs opacity-60 [overflow-wrap:anywhere]">
+            <span
+              className={`text-xs [overflow-wrap:anywhere] ${t.status === "failed" ? "text-red-400" : "opacity-60"}`}
+            >
               {t.due ? `due ${new Date(t.due).toLocaleString()}` : ""}
               {t.due && t.detail ? " · " : ""}
               {t.detail}

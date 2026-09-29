@@ -67,7 +67,7 @@ describe("quickstart-agent template", () => {
     // air quality, deep research, reminder, memory, profile and stop tools.
     expect(deployedDef.builtinTools).toContain("open_meteo");
     expect(deployedDef.builtinTools).toEqual(
-      expect.arrayContaining(["calculate", "visit_webpage", "text_me"]),
+      expect.arrayContaining(["calculate", "visit_webpage"]),
     );
     expect(Object.keys(deployedDef.tools ?? {}).sort()).toEqual([
       "air_quality",
@@ -81,6 +81,7 @@ describe("quickstart-agent template", () => {
       "remember",
       "remind_me",
       "stop",
+      "text_me",
       "update_profile",
     ]);
     // Not "some prompt" but NOT the framework's — `system-prompt.md` is the

@@ -131,7 +131,9 @@ describe("textReport", () => {
 
   test("texts an allowlisted number the client reported", async () => {
     const sent = textbelt();
-    expect(await textReport({ topic: "t", phone: "+15555550111" }, "The report.")).toBe(true);
+    expect(await textReport({ topic: "t", phone: "+15555550111" }, "The report.")).toEqual({
+      sent: true,
+    });
     expect(sent()).toMatchObject({
       phone: "+15555550111",
       message: "The report.",
@@ -149,8 +151,35 @@ describe("textReport", () => {
     vi.stubEnv("TEXTBELT_KEY", "k");
     vi.stubEnv("SMS_TO_PHONE", "");
     const fetched = installStubStepFetch(() => ({ body: { success: true } }));
-    expect(await textReport({ topic: "t" }, "r")).toBe(false);
+    expect(await textReport({ topic: "t" }, "r")).toEqual({ sent: false });
     expect(fetched.calls).toEqual([]);
+  });
+
+  test("links are taken out before Textbelt sees the report", async () => {
+    const sent = textbelt();
+    await textReport(
+      { topic: "t", phone: "+15555550111" },
+      "It works [1].\n\nSources:\n[1] https://example.com/heat-pumps",
+    );
+    expect(sent().message).toBe("It works [1].");
+  });
+
+  test("a refusal is an answer, not a failed run, and never quotes the key", async () => {
+    vi.stubEnv("TEXTBELT_KEY", "test-key-123456");
+    vi.stubEnv("SMS_TO_PHONE", "+15555550100");
+    installStubStepFetch(() => ({
+      body: {
+        success: false,
+        error:
+          "Sorry, ability to send URLs via text is limited to verified accounts. Please go to https://textbelt.com/whitelist?key=test-key-123456 or email support.",
+      },
+    }));
+    const texted = await textReport({ topic: "t" }, "The report.");
+    expect(texted).toMatchObject({
+      sent: false,
+      why: expect.stringContaining("verified accounts"),
+    });
+    expect(JSON.stringify(texted)).not.toContain("test-key-123456");
   });
 });
 
@@ -162,7 +191,9 @@ describe("announce", () => {
     const speech = stubSpeech({ pcmBytes: 3200 });
     const inbox = stubClientInbox();
     try {
-      await announce("wrun_9", { topic: "heat pumps", clientId: "kitchen" }, "They work.", true);
+      await announce("wrun_9", { topic: "heat pumps", clientId: "kitchen" }, "They work.", {
+        sent: true,
+      });
       expect(speech.calls).toMatchObject([
         {
           text: "Your research on heat pumps is ready. They work. I've texted you the full report.",

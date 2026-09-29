@@ -8,6 +8,8 @@ import type {
 import { subagent, tool } from "@alexkroman1/aai";
 import {
   allowedSmsRecipient,
+  ChannelDeliveryError,
+  sendToChannel,
   TEXTBELT_MAX_MESSAGE_CHARS,
   textbeltChannel,
 } from "@alexkroman1/aai/channels";
@@ -21,12 +23,13 @@ import {
   stepSpeak,
 } from "@alexkroman1/aai/step";
 import {
-  sendToChannelOrFail,
   stepGenerateJsonOrFail,
   stepGenerateOrFail,
+  throwStepError,
 } from "@alexkroman1/aai/step-errors";
 import { isRecord, plural } from "@alexkroman1/aai/utils";
 import { z } from "zod";
+import { stripLinks } from "../sms.ts";
 import { DELIVER_ATTEMPTS, NOTICE_SAMPLE_RATE } from "./remind.ts";
 import {
   allSources,
@@ -91,7 +94,27 @@ export type ResearchInput = {
   phone?: string | undefined;
 };
 
+/**
+ * The run, and if it fails, saying so on the speaker before the run is marked failed: a
+ * job that was promised minutes ago must not just go quiet. The failure still fails the
+ * run, so the page's Running panel shows it with its reason.
+ */
 export async function researchFlow(input: ResearchInput, ctx: WorkflowContext) {
+  try {
+    return await research(input, ctx);
+  } catch (err) {
+    const { runId } = ctx;
+    const why = failureReason(err);
+    if (input.clientId) {
+      await ctx.step("announceFailure", () => announceFailure(runId, input, why), {
+        maxAttempts: DELIVER_ATTEMPTS,
+      });
+    }
+    throw err;
+  }
+}
+
+async function research(input: ResearchInput, ctx: WorkflowContext) {
   const brief = await ctx.step("writeBrief", () => writeBrief(input.topic));
   const angles = await ctx.step("planAngles", () => planAngles(brief));
   // One step per angle, in an order a replay reproduces: mapConcurrent hands items out
@@ -260,22 +283,70 @@ export function withSources(
 }
 
 /**
- * False when there is no number to text; the speaker still says the summary.
+ * How the report went by text. Not sent is not a failed run: the summary is written and
+ * the speaker still says it, with the reason the text didn't go.
+ */
+export type Texted = { sent: true } | { sent: false; why?: string };
+
+/**
+ * Not sent when there is no number to text; the speaker still says the summary.
  *
  * The client's number is only a CLAIM: the server listens on the LAN for the speaker,
  * so anyone who can open a session could name any number. It is used only when it is
  * the owner's (SMS_TO_PHONE) or listed in SMS_ALLOWED_PHONES; anything else falls back
  * to the owner. The same rule text_me applies.
  */
-export async function textReport(input: ResearchInput, report: string): Promise<boolean> {
+export async function textReport(input: ResearchInput, report: string): Promise<Texted> {
   const to = allowedSmsRecipient(input.phone, {
     SMS_TO_PHONE: stepEnv("SMS_TO_PHONE"),
     SMS_ALLOWED_PHONES: stepEnv("SMS_ALLOWED_PHONES"),
   });
-  if (!to) return false;
+  if (!to) return { sent: false };
   const channel = textbeltChannel({ key: requireStepEnv("TEXTBELT_KEY"), to });
-  await sendToChannelOrFail(channel, { text: report });
-  return true;
+  // Links out (sms.ts): Textbelt refuses a text with one until the key is verified.
+  return await sendToChannel(channel, { text: stripLinks(report) }).then(
+    (): Texted => ({ sent: true }),
+    (err: unknown): Texted => {
+      // A refusal that will refuse again (a bad number, an unverified key) is an answer;
+      // a transient failure is thrown for the step to retry.
+      if (err instanceof ChannelDeliveryError && !err.retryable) {
+        return { sent: false, why: failureReason(err) };
+      }
+      return throwStepError(err);
+    },
+  );
+}
+
+/** Longest reason said or shown for a failure. */
+const MAX_REASON_CHARS = 160;
+
+/**
+ * A failure as a short reason a person can hear: its first sentence, with anything that
+ * looks like a credential in a URL taken out (a provider's refusal can quote the key).
+ */
+export function failureReason(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  const first = message.split(/(?<=[.!?])\s/)[0] ?? message;
+  return stripLinks(first.replace(/([?&](?:key|token|secret|sig)=)[^&\s]+/gi, "$1[redacted]"))
+    .slice(0, MAX_REASON_CHARS)
+    .trim();
+}
+
+/** Say on the speaker that the research did not finish, and why. */
+export async function announceFailure(
+  id: string,
+  input: ResearchInput,
+  why: string,
+): Promise<void> {
+  if (!input.clientId) return;
+  const said = `Sorry, the research on ${input.topic} didn't finish. ${why}`;
+  const spoken = await stepSpeak(said, { sampleRate: NOTICE_SAMPLE_RATE });
+  await stepNotifyClient(input.clientId, {
+    id: `${id}:failed`,
+    event: "research",
+    data: { topic: input.topic, failed: true },
+    audio: spoken.pcm,
+  });
 }
 
 /**
@@ -287,12 +358,15 @@ export async function announce(
   id: string,
   input: ResearchInput,
   summary: string,
-  texted: boolean,
+  texted: Texted,
 ): Promise<void> {
   if (!input.clientId) return;
-  const said = `Your research on ${input.topic} is ready. ${summary}${
-    texted ? " I've texted you the full report." : ""
-  }`;
+  const delivery = texted.sent
+    ? " I've texted you the full report."
+    : texted.why
+      ? ` I couldn't text you the full report: ${texted.why}`
+      : "";
+  const said = `Your research on ${input.topic} is ready. ${summary}${delivery}`;
   const spoken = await stepSpeak(said, { sampleRate: NOTICE_SAMPLE_RATE });
   await stepNotifyClient(input.clientId, {
     id,

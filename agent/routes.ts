@@ -7,6 +7,7 @@ import { readProfile, writeProfile } from "./profile.ts";
 import { remind, research } from "./shared.ts";
 import { rest } from "./supabase.ts";
 import { taskLabels } from "./tasks.ts";
+import { failureReason } from "./workflows/research.ts";
 
 // What the page's sidebar reads and edits, as the agent's own JSON endpoints under /api
 // (agent.ts `routes`): the household profile, the memories mem0 holds, the context each
@@ -210,7 +211,13 @@ const handlers: Record<string, Handler> = {
           workflow: r.workflow,
           status: r.status === "pending" ? "waiting" : r.status,
           title: label?.title ?? r.workflow,
-          ...(typeof line === "string" ? { detail: line } : {}),
+          // Why it failed, as the speaker says it: short, and with no credential a
+          // provider's refusal quoted.
+          ...(r.status === "failed"
+            ? { detail: failureReason(new Error(r.error)) }
+            : typeof line === "string"
+              ? { detail: line }
+              : {}),
           due: label?.due_at ? Date.parse(label.due_at) : null,
           updatedAt: r.createdAt,
         };
