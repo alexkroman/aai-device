@@ -37,7 +37,7 @@ export async function announceFailure(id: string, input: EmailInput, why: string
   await stepNotifyClient(input.clientId, {
     id: `${id}:failed`,
     event: "email",
-    data: { text: said, said, failed: true },
+    data: { said, failed: true },
     audio: spoken.pcm,
   });
 }

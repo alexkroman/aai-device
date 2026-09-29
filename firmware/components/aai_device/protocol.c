@@ -156,7 +156,10 @@ bool proto_parse_notice(const char *json, size_t len, proto_notice_t *out)
     if (ok) {
         snprintf(out->id, sizeof(out->id), "%s", id);
         snprintf(out->event, sizeof(out->event), "%s", event);
-        copy_str(out->text, sizeof(out->text), cJSON_GetObjectItem(cJSON_GetObjectItem(msg, "data"), "text"));
+        // The words spoken, else what it is about (a notice sends one or both).
+        const cJSON *said = cJSON_GetObjectItem(cJSON_GetObjectItem(msg, "data"), "said");
+        copy_str(out->text, sizeof(out->text),
+                 cJSON_IsString(said) ? said : cJSON_GetObjectItem(cJSON_GetObjectItem(msg, "data"), "text"));
         out->bytes = (size_t)bytes;
     }
     cJSON_Delete(msg);

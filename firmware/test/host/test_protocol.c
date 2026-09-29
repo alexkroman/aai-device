@@ -267,6 +267,10 @@ static void test_notice(void)
     TEST_ASSERT_EQUAL_STRING("reminder", notice.event);
     TEST_ASSERT_EQUAL_STRING("call the plumber", notice.text);
     TEST_ASSERT_EQUAL(32000, notice.bytes);
+    // The words said win over what it is about.
+    TEST_ASSERT_TRUE(parse_notice("{\"type\":\"notice\",\"id\":\"r\",\"event\":\"reminder\","
+                                  "\"data\":{\"text\":\"plumber\",\"said\":\"Reminder: plumber\"},\"bytes\":0}"));
+    TEST_ASSERT_EQUAL_STRING("Reminder: plumber", notice.text);
     // No data, no audio.
     TEST_ASSERT_TRUE(parse_notice("{\"type\":\"notice\",\"id\":\"r\",\"event\":\"ring\",\"bytes\":0}"));
     TEST_ASSERT_EQUAL_STRING("", notice.text);

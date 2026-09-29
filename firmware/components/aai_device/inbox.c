@@ -16,7 +16,7 @@
 static const char *TAG = "inbox";
 
 #define INBOX_BUFFER_SIZE 2048                            // the agent's frames are 4 KiB; they arrive in pieces
-#define HEADER_MAX        1024                            // a notice header; anything longer is not one we take
+#define HEADER_MAX        8192                            // a notice header (in PSRAM); data carries the words said
 #define REPLY_MAX         (PROTO_NOTICE_ID_MAX * 6 + 32)  // every id byte escaped
 #define RECENT_IDS        8                               // acked ids remembered, so a redelivery isn't replayed
 
@@ -100,7 +100,9 @@ static void on_header(const char *json, size_t len)
         s_rx = RX_IDLE;  // its bytes never all came; the agent retries it, unacked
     }
     if (!proto_parse_notice(json, len, &s_notice)) {
-        return;  // not a notice we can take; unanswered, so it is retried and then given up on
+        // Not a notice we can take; unanswered, so it is retried and then given up on.
+        ESP_LOGW(TAG, "dropped a header this device can't take (%u bytes): %.80s", (unsigned)len, json);
+        return;
     }
     s_remaining = s_notice.bytes;
     if (seen(s_notice.id)) {
@@ -165,6 +167,10 @@ static void ws_handler(void *arg, esp_event_base_t base, int32_t id, void *event
             if (ev->payload_offset + ev->data_len >= ev->payload_len) {
                 on_header(header, ev->payload_len);
             }
+        } else if (ev->payload_offset == 0) {
+            // Unanswered like any header we can't take, but said: silence here is an hour of
+            // "did not ack in time" on the agent with nothing on this side.
+            ESP_LOGW(TAG, "dropped a %d-byte header (max %d)", ev->payload_len, HEADER_MAX - 1);
         }
         break;
     }

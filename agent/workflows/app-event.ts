@@ -57,7 +57,7 @@ export async function tell(id: string, input: AppEventInput, said: string): Prom
   await stepNotifyClient(input.clientId, {
     id,
     event: "app",
-    data: { app: input.app, text: said, said },
+    data: { app: input.app, said },
     audio: spoken.pcm,
   });
 }

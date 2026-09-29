@@ -149,7 +149,7 @@ async function announce(
   await stepNotifyClient(input.clientId, {
     id,
     event: "call",
-    data: { text: said, said },
+    data: { said },
     audio: spoken.pcm,
   });
   return said;

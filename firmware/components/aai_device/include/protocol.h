@@ -60,7 +60,7 @@ bool proto_inbox_url(const char *agent_url, const char *client_id, char *out, si
 typedef struct {
     char id[PROTO_NOTICE_ID_MAX + 1];
     char event[24];
-    char text[128];  // data.text when present, for the log (truncated)
+    char text[128];  // data.said, else data.text, for the log (truncated)
     size_t bytes;    // binary bytes that follow the header; validated, even
 } proto_notice_t;
 
