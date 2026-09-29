@@ -1,7 +1,6 @@
 import { sessionClientId, sessionClientPhone, tool } from "@alexkroman1/aai";
 import { z } from "zod";
 import { research } from "../shared.ts";
-import { labelTask } from "../tasks.ts";
 
 // "Do some deep research on heat pumps for an old house." Minutes of work, so it can't
 // happen in this conversation: this starts a durable run (workflows/research.ts) and
@@ -26,12 +25,11 @@ export default tool({
     const clientId = sessionClientId(ctx);
     const phone = sessionClientPhone(ctx);
     // Keyed by the speaker, so its Running panel can find the run (GET /api/tasks).
-    const runId = await ctx.workflows.start(
+    await ctx.workflows.start(
       research,
       { topic, clientId, phone },
-      clientId ? { key: clientId } : {},
+      clientId ? { key: clientId, label: topic } : { label: topic },
     );
-    if (clientId) await labelTask(ctx, { runId, clientId, workflow: "research", title: topic });
     return {
       started: true,
       // What the model can promise: the speaker only announces to a speaker.

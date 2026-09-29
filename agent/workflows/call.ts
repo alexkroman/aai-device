@@ -1,30 +1,23 @@
 import type { WorkflowContext } from "@alexkroman1/aai";
 import {
+  PlaceCallError,
   requireStepEnv,
+  stepCallStatus,
   stepEnv,
-  stepFetch,
   stepNotifyClient,
+  stepPlaceCall,
   stepSpeak,
 } from "@alexkroman1/aai/step";
 import { throwStepError } from "@alexkroman1/aai/step-errors";
-import {
-  CALL_TIME_LIMIT_S,
-  callerUrl,
-  callStatus,
-  dial,
-  RING_TIMEOUT_S,
-  readCall,
-  type TwilioEnv,
-  TwilioError,
-  updateCall,
-} from "../calls.ts";
+import { CALL_TIME_LIMIT_S, callerUrl, RING_TIMEOUT_S, readCall, updateCall } from "../calls.ts";
 import { DELIVER_ATTEMPTS, NOTICE_SAMPLE_RATE } from "./remind.ts";
 
 // A call the household approved (tools/place_call.ts): dial it through Twilio, wait for
 // it to end, and say how it went on the speaker that asked. The call itself is run by the
 // calling agent (caller/), which writes its transcript and outcome to the calls row.
 //
-//   dial      1 step    Twilio's Calls API, the answered call streamed to caller/'s /phone
+//   dial      1 step    the SDK's stepPlaceCall: Twilio dials, the answered call streamed
+//                       to caller/'s /phone with the call id as a <Parameter>
 //   check     N steps   every POLL_MS: the row, and Twilio's own status of the call
 //   announce  1 step    the outcome (or why it didn't happen), spoken on the speaker
 
@@ -55,12 +48,10 @@ export async function callFlow(input: CallInput, ctx: WorkflowContext) {
   return { said, twilio: last.twilio ?? null };
 }
 
-/** Twilio's settings, or undefined when agent/.env lacks any of them. */
-function twilio(): TwilioEnv | undefined {
-  const accountSid = stepEnv("TWILIO_ACCOUNT_SID")?.trim();
-  const authToken = stepEnv("TWILIO_AUTH_TOKEN")?.trim();
-  const from = stepEnv("TWILIO_FROM_NUMBER")?.trim();
-  return accountSid && authToken && from ? { accountSid, authToken, from } : undefined;
+/** The number to call from, or undefined when agent/.env lacks any Twilio setting. */
+function twilioFrom(): string | undefined {
+  const ok = ["TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN"].every((k) => stepEnv(k)?.trim());
+  return ok ? stepEnv("TWILIO_FROM_NUMBER")?.trim() || undefined : undefined;
 }
 
 /** A step has no ctx.env: what supabase.ts reads, from the step's env. */
@@ -78,8 +69,8 @@ async function placeCall(callId: string): Promise<Dialled> {
   const call = await readCall(db(), callId);
   if (call?.status !== "approved") return { failed: "the call was no longer approved" };
   // Missing setup is an answer to say, not a failure to retry three times in silence.
-  const t = twilio();
-  if (!t) {
+  const from = twilioFrom();
+  if (!from) {
     await updateCall(db(), callId, { status: "failed", error: "Twilio is not set up" });
     return { failed: "calling isn't set up yet (TWILIO_ settings in agent/.env)" };
   }
@@ -89,11 +80,19 @@ async function placeCall(callId: string): Promise<Dialled> {
     return { failed: "the calling agent isn't running (make caller)" };
   }
   try {
-    const sid = await dial(stepFetch, t, { id: callId, to: call.to_number }, base);
+    const { callId: sid } = await stepPlaceCall({
+      carrier: "twilio",
+      to: call.to_number,
+      from,
+      agentUrl: base,
+      parameters: { call: callId },
+      timeLimitS: CALL_TIME_LIMIT_S,
+      ringTimeoutS: RING_TIMEOUT_S,
+    });
     await updateCall(db(), callId, { status: "dialing", twilio_sid: sid });
     return { sid };
   } catch (err) {
-    if (err instanceof TwilioError && !err.retryable) {
+    if (err instanceof PlaceCallError && !err.retryable) {
       await updateCall(db(), callId, { status: "failed", error: err.message });
       return { failed: err.message };
     }
@@ -102,10 +101,9 @@ async function placeCall(callId: string): Promise<Dialled> {
 }
 
 async function checkCall(callId: string, sid: string): Promise<Checked> {
-  const t = twilio();
   const [call, status] = await Promise.all([
     readCall(db(), callId),
-    t ? callStatus(stepFetch, t, sid).catch(() => "unknown") : Promise.resolve("unknown"),
+    stepCallStatus({ carrier: "twilio", callId: sid }).catch((): string => "unknown"),
   ]);
   const over = OVER.has(status) || call?.status === "ended" || call?.status === "failed";
   if (over && call && call.status !== "ended" && call.status !== "failed") {

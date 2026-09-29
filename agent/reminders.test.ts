@@ -56,7 +56,7 @@ describe("remind_me", () => {
     expect(start).toHaveBeenCalledWith(
       remind,
       { clientId: "kitchen", text: "call the plumber", dueAt: new Date(2026, 8, 28, 17).getTime() },
-      { key: "kitchen" },
+      { key: "kitchen", label: expect.stringMatching(/ · due /) },
     );
   });
 

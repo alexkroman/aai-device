@@ -6,7 +6,6 @@ import { addMemories, allMemories, forgetMemory, updateMemory } from "./memory.t
 import { readProfile, writeProfile } from "./profile.ts";
 import { call, remind, research } from "./shared.ts";
 import { rest } from "./supabase.ts";
-import { taskLabels } from "./tasks.ts";
 import { failureReason } from "./workflows/research.ts";
 
 // What the page's sidebar reads and edits, as the agent's own JSON endpoints under /api
@@ -197,14 +196,9 @@ const handlers: Record<string, Handler> = {
           r.status === "running" ||
           Date.now() - r.createdAt < RECENTLY_FINISHED_MS,
       );
-    const labels = await taskLabels(
-      ctx,
-      id,
-      runs.map((r) => r.runId),
-    );
+
     const tasks = await Promise.all(
       runs.map(async (r) => {
-        const label = labels.get(r.runId);
         // Research narrates its progress; a line lost to a restart just isn't shown.
         const line =
           r.workflow === "research" && r.status === "running"
@@ -214,7 +208,7 @@ const handlers: Record<string, Handler> = {
           runId: r.runId,
           workflow: r.workflow,
           status: r.status === "pending" ? "waiting" : r.status,
-          title: label?.title ?? r.workflow,
+          title: r.label ?? r.workflow,
           // Why it failed, as the speaker says it: short, and with no credential a
           // provider's refusal quoted.
           ...(r.status === "failed"
@@ -228,18 +222,17 @@ const handlers: Record<string, Handler> = {
               : typeof line === "string"
                 ? { detail: line }
                 : {}),
-          due: label?.due_at ? Date.parse(label.due_at) : null,
           updatedAt: r.createdAt,
         };
       }),
     );
-    return { tasks: tasks.sort((a, b) => (a.due ?? a.updatedAt) - (b.due ?? b.updatedAt)) };
+    return { tasks: tasks.sort((a, b) => a.updatedAt - b.updatedAt) };
   },
   "DELETE /tasks/:runId": async (req, ctx) => {
     const id = client(req);
     const runId = req.params.runId ?? "";
-    // Only a run of THIS speaker: its label says whose it is.
-    if (!(await taskLabels(ctx, id, [runId])).has(runId)) {
+    // Only a run of THIS speaker: its key is the speaker's client id.
+    if ((await ctx.workflows.get(runId))?.key !== id) {
       return routeResponse(404, { error: "no such task on this speaker" });
     }
     return { cancelled: await ctx.workflows.cancel(runId) };

@@ -1,7 +1,14 @@
-import { useConversation, useEvent, useSession } from "@alexkroman1/aai-ui";
+import {
+  type InboxEvent,
+  type InboxNotice,
+  useConversation,
+  useEvent,
+  useInbox,
+  useSession,
+  useSessionId,
+} from "@alexkroman1/aai-ui";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { clientId, inboxHolderId } from "./client-id.ts";
-import { playPcm, stopCues, unlockAudio } from "./cues.ts";
+import { clientId } from "./client-id.ts";
 import {
   addNote,
   type Entry,
@@ -11,8 +18,6 @@ import {
   saveHistory,
   toItems,
 } from "./history.ts";
-import { type LiveEvent, type Notice, openInbox } from "./inbox.ts";
-import { useSessionId } from "./session-id.ts";
 
 // firmware main.c, on top of the SDK's browser session:
 //
@@ -81,9 +86,8 @@ export function useDevice() {
     if (session.error) setFailed(true);
   }, [session.error]);
 
-  // inbox.c: held open from load, idle or not. Mid-conversation it answers "busy", as the
-  // device does, so a reminder never talks over a reply; the agent brings it back later.
-  const [inboxUp, setInboxUp] = useState(false);
+  // inbox.c, from the SDK (aai-ui useInbox): held open from load, idle or not, and busy
+  // mid-conversation as the device is, so a reminder never talks over a reply.
   const busy = useRef(false);
   busy.current = phase !== "idle";
   // The live conversation of every OTHER session of this client: the speaker's, when
@@ -91,7 +95,7 @@ export function useDevice() {
   const ownSession = useRef(sessionId);
   ownSession.current = sessionId;
   const mirrored = useRef(new Map<string, Item[]>());
-  const onEvent = useCallback((e: LiveEvent) => {
+  const onEvent = useCallback((e: InboxEvent) => {
     if (e.sessionId === ownSession.current) return;
     const items = mirrored.current.get(e.sessionId) ?? [];
     if (e.type === "session_ended") {
@@ -104,20 +108,13 @@ export function useDevice() {
     mirrored.current.set(e.sessionId, items);
     setHistory((h) => recordSession(h, e.sessionId, [...items], Date.now(), clientId()));
   }, []);
-  useEffect(
-    () =>
-      openInbox(clientId(), {
-        holder: inboxHolderId(),
-        busy: () => busy.current,
-        onOnline: setInboxUp,
-        onEvent,
-        onNotice: (n) => {
-          note(noticeText(n));
-          playPcm(n.pcm);
-        },
-      }),
-    [note, onEvent],
-  );
+  const inbox = useInbox({
+    busy: () => busy.current,
+    events: true,
+    onEvent,
+    onNotice: (n) => note(noticeText(n)),
+  });
+  const stopCues = inbox.stopPlayback;
 
   const hangUp = useCallback(() => {
     pendingText.current = null;
@@ -142,7 +139,7 @@ export function useDevice() {
       session.resume(id);
       note("Continuing an earlier conversation");
     },
-    [session, note],
+    [session, note, stopCues],
   );
 
   const newSession = useCallback(() => {
@@ -151,7 +148,7 @@ export function useDevice() {
     setTalking(false);
     session.end();
     note("New session");
-  }, [session, note]);
+  }, [session, note, stopCues]);
 
   const connect = useCallback(() => {
     setFailed(false);
@@ -166,12 +163,11 @@ export function useDevice() {
 
   /** The button went down: cut off a notice, interrupt a reply, open the mic. */
   const startTalking = useCallback(() => {
-    unlockAudio();
     stopCues();
     if (phase === "idle") connect();
     else session.cancel();
     setTalking(true);
-  }, [phase, session, connect]);
+  }, [phase, session, connect, stopCues]);
 
   /** The button came up: silence from here lets the agent end the turn. */
   const stopTalking = useCallback(() => {
@@ -184,7 +180,6 @@ export function useDevice() {
     (text: string) => {
       const line = text.trim();
       if (!line) return;
-      unlockAudio();
       if (phase === "active") {
         session.sendText(line);
         return;
@@ -262,7 +257,7 @@ export function useDevice() {
     endSession: session.end,
     sessionId,
     clientId: clientId(),
-    inboxUp,
+    inboxUp: inbox.connected,
   };
 }
 
@@ -285,7 +280,7 @@ function mirrorItem(event: { type: string } & Record<string, unknown>): Item | u
 }
 
 /** The history line for a notice: what it said, as the device logs it. */
-function noticeText(n: Notice): string {
+function noticeText(n: InboxNotice): string {
   const text = n.data?.text ?? n.data?.topic;
   const what = typeof text === "string" ? `: ${text}` : "";
   const label =

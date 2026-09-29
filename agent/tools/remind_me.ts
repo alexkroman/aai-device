@@ -1,7 +1,6 @@
 import { sessionClientId, tool } from "@alexkroman1/aai";
 import { z } from "zod";
 import { MAX_REMINDER_MS, remind, reminderDueAt, spokenDue } from "../shared.ts";
-import { labelTask } from "../tasks.ts";
 
 // "Remind me to call the plumber at five." Held by the AGENT, not the speaker, so it outlives
 // the session and a reboot: a durable run sleeps until it is due, speaks the reminder, and pushes the audio to
@@ -40,8 +39,12 @@ export default tool({
     if (dueAt - now.getTime() > MAX_REMINDER_MS) {
       return { error: "Reminders can be at most a week away." };
     }
-    const runId = await ctx.workflows.start(remind, { clientId, text, dueAt }, { key: clientId });
-    await labelTask(ctx, { runId, clientId, workflow: "remind", title: text, dueAt });
+    // The label is what the page's Running panel shows for the run.
+    await ctx.workflows.start(
+      remind,
+      { clientId, text, dueAt },
+      { key: clientId, label: `${text} · due ${spokenDue(now, dueAt)}` },
+    );
     return { scheduled: true, text, due: spokenDue(now, dueAt) };
   },
 });

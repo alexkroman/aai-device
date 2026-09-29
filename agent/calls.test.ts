@@ -1,17 +1,10 @@
 import { afterEach, vi } from "vitest";
-import {
-  approveCall,
-  CALL_TIME_LIMIT_S,
-  callTwiml,
-  DRAFT_TTL_MS,
-  dial,
-  MAX_CALLS_PER_DAY,
-  TwilioError,
-} from "./calls.ts";
+import { approveCall, DRAFT_TTL_MS, MAX_CALLS_PER_DAY } from "./calls.ts";
 import { callReport } from "./workflows/call.ts";
 
 // The rules between "call Luigi's" and a phone ringing: a call is dialled only from the
-// draft this session read back, while it is fresh, under the day's cap.
+// draft this session read back, while it is fresh, under the day's cap. (The dial itself
+// is the SDK's stepPlaceCall, tested there.)
 
 const ctx = { env: { SUPABASE_URL: "http://supabase.test", SUPABASE_SECRET_KEY: "sb-test" } };
 const session = { sessionId: "s1", clientId: "kitchen" };
@@ -70,52 +63,6 @@ test("refuses an expired draft, one already used, and one past the day's cap", a
   expect(await approveCall(ctx, "call_1", session, now)).toMatchObject({
     why: expect.stringContaining(`${MAX_CALLS_PER_DAY} calls`),
   });
-});
-
-test("dials with the call streamed to the calling agent, capped, and names the call", async () => {
-  const fetchFn = vi.fn(
-    async (_url: string, _init: { body?: string; headers: Record<string, string> }) =>
-      new Response(JSON.stringify({ sid: "CA123" }), { status: 201 }),
-  );
-  const t = { accountSid: "AC1", authToken: "tok-secret", from: "+15555550100" };
-  expect(
-    await dial(fetchFn, t, { id: "call_1", to: "+15555550177" }, "https://x.trycloudflare.com"),
-  ).toBe("CA123");
-  const [url, init] = fetchFn.mock.calls[0] as [
-    string,
-    { body?: string; headers: Record<string, string> },
-  ];
-  expect(url).toBe("https://api.twilio.com/2010-04-01/Accounts/AC1/Calls.json");
-  const form = new URLSearchParams(init.body);
-  expect(form.get("To")).toBe("+15555550177");
-  expect(form.get("TimeLimit")).toBe(String(CALL_TIME_LIMIT_S));
-  expect(form.get("Twiml")).toBe(
-    callTwiml("wss://x.trycloudflare.com/phone?carrier=twilio", "call_1"),
-  );
-  expect(init.headers.authorization).toBe(`Basic ${btoa("AC1:tok-secret")}`);
-});
-
-test("a Twilio refusal is advice, retried only when it is Twilio's fault, never quoting the token", async () => {
-  const t = { accountSid: "AC1", authToken: "tok-secret", from: "+15555550100" };
-  const answer = (status: number, body: object) => async () =>
-    new Response(JSON.stringify(body), { status });
-  const trial = await dial(
-    answer(400, { code: 21219, message: "unverified" }),
-    t,
-    { id: "c", to: "+1" },
-    "https://x",
-  ).catch((e: TwilioError) => e);
-  expect(trial).toBeInstanceOf(TwilioError);
-  expect((trial as TwilioError).message).toContain("trial account");
-  expect((trial as TwilioError).retryable).toBe(false);
-  const busy = await dial(
-    answer(503, { message: "down" }),
-    t,
-    { id: "c", to: "+1" },
-    "https://x",
-  ).catch((e) => e);
-  expect((busy as TwilioError).retryable).toBe(true);
-  expect(String(trial) + String(busy)).not.toContain("tok-secret");
 });
 
 test("what the speaker says afterwards", () => {

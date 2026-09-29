@@ -1,31 +1,41 @@
-// This browser's ?client= id, the counterpart of the firmware's CONFIG_AAI_CLIENT_ID (else
-// its MAC): the id sessionClientId(ctx) answers, so remind_me and deep_research can hand a
-// run the way back here, and the one the inbox socket is held under. Made once and kept,
-// because a reminder set today is delivered to whoever holds this id tomorrow.
+import { browserClientId } from "@alexkroman1/aai-ui";
 
-const KEY = "aai-device:client";
+// Which conversation this page is: the speaker it was linked to by a spoken code
+// (link.ts), else this browser's own. The SDK keeps the browser's id and gives each tab
+// its own inbox holder (aai-ui `client: "auto"`); this only adds the link on top.
+
+/** Where this page kept its id before the SDK did: carried over, so its history stays its own. */
+const LEGACY_KEY = "aai-device:client";
 /** The speaker this browser joined by a spoken code (link.ts), if any. */
 const LINKED_KEY = "aai-device:linked";
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
-let current: string | undefined;
+function stored(key: string): string | undefined {
+  try {
+    const id = localStorage.getItem(key) ?? undefined;
+    return id && ID_RE.test(id) ? id : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /**
- * The conversation this page is: the linked speaker's, once a code was said to it,
- * else this browser's own. Sessions, history and reminders all follow it.
+ * This browser itself, linked or not: what it asks for a link code as. An id this page
+ * minted before the SDK kept one is carried over: its conversation, reminders and link
+ * code are all keyed by it.
  */
+export function browserId(): string {
+  return stored(LEGACY_KEY) ?? browserClientId();
+}
+
+/** The conversation this page is: the linked speaker's, once a code was said to it. */
 export function clientId(): string {
   return linkedSpeaker() ?? browserId();
 }
 
 /** The speaker this page joined, or undefined. */
 export function linkedSpeaker(): string | undefined {
-  try {
-    const id = localStorage.getItem(LINKED_KEY) ?? undefined;
-    return id && ID_RE.test(id) ? id : undefined;
-  } catch {
-    return undefined;
-  }
+  return stored(LINKED_KEY);
 }
 
 /** Join a speaker's conversation (or leave it with undefined). The page reloads to take it up. */
@@ -36,40 +46,4 @@ export function setLinkedSpeaker(id: string | undefined): void {
   } catch {
     // Private mode: the link lasts until the tab closes.
   }
-}
-
-/**
- * This browser itself, linked or not: what it asks for a link code as, and the inbox
- * holder id that lets it share a speaker's inbox without displacing the speaker.
- */
-export function browserId(): string {
-  if (current) return current;
-  try {
-    current = localStorage.getItem(KEY) ?? undefined;
-  } catch {
-    // Private mode: an id for this tab only.
-  }
-  // CLIENT_ID_RE in the SDK: 1-64 of A-Z a-z 0-9 _ -.
-  if (!current || !ID_RE.test(current)) {
-    current = `browser-${crypto.randomUUID().slice(0, 8)}`;
-    try {
-      localStorage.setItem(KEY, current);
-    } catch {
-      // As above.
-    }
-  }
-  return current;
-}
-
-/** This tab, for this page load: see {@link inboxHolderId}. */
-const TAB = crypto.randomUUID().slice(0, 8);
-
-/**
- * The inbox holder id of THIS TAB. Not {@link browserId}: every tab shares localStorage,
- * so two tabs presented the same (client, holder) pair, and the inbox's rule for a pair
- * that reconnects — the new socket REPLACES the old, which is right for a device back
- * from a Wi-Fi drop — had the tabs knock each other off about once a second, forever.
- */
-export function inboxHolderId(): string {
-  return `${browserId()}-${TAB}`;
 }

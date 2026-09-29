@@ -236,7 +236,6 @@ type Task = {
   status: string;
   title: string;
   detail?: string;
-  due?: number | null;
   updatedAt: number;
 };
 
@@ -256,12 +255,10 @@ function Tasks() {
               {t.status}
             </span>
           </div>
-          {(t.detail || t.due) && (
+          {t.detail && (
             <span
               className={`text-xs [overflow-wrap:anywhere] ${t.status === "failed" ? "text-red-400" : "opacity-60"}`}
             >
-              {t.due ? `due ${new Date(t.due).toLocaleString()}` : ""}
-              {t.due && t.detail ? " · " : ""}
               {t.detail}
             </span>
           )}

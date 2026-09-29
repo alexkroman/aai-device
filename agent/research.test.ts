@@ -77,7 +77,7 @@ describe("deep_research", () => {
         clientId: "kitchen",
         phone: "+15555550123",
       },
-      { key: "kitchen" },
+      { key: "kitchen", label: "heat pumps for an old house" },
     );
   });
 
