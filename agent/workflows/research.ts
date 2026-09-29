@@ -55,8 +55,8 @@ import {
 // Deep research, the SDK's research-handoff-agent template (workflows/research.ts) cut to
 // what a speaker needs. Minutes of work, so it can't happen in the conversation: the
 // session hangs up FOLLOWUP_MS after the reply and a tool call has 30 s. deep_research
-// starts this run and answers at once; the run texts the report and says a summary on
-// the speaker when it lands.
+// starts this run and answers at once; the run says a summary on the speaker when it
+// lands, and texts the report only when they asked for it.
 //
 //   writeBrief      1 step    the spoken request as something a researcher is held to
 //   planAngles      1 step    the angles worth pursuing (the fan-out's width)
@@ -64,10 +64,10 @@ import {
 //   findGaps        1 step    the supervisor's second look
 //   investigateGap  M steps   the second wave, when there is one
 //   writeReport     1 step    the text-message report, then the sentences to say
-//   text, announce            delivery: the phone, then the speaker
+//   text, announce            delivery: the phone if asked, then the speaker
 //
-// Dropped from the template: its review window and channel filing. The text message is
-// the filing.
+// Dropped from the template: its review window and channel filing. The text message,
+// when they ask for one, is the filing.
 
 /** Angles investigated at once. The far side of every one is a rate limit. */
 const ANGLE_CONCURRENCY = 2;
@@ -92,6 +92,8 @@ export type ResearchInput = {
   clientId?: string | undefined;
   /** The number the session's client reported; absent means SMS_TO_PHONE. */
   phone?: string | undefined;
+  /** They asked for the report by text. Never texted otherwise. */
+  text?: boolean | undefined;
 };
 
 /**
@@ -129,7 +131,9 @@ async function research(input: ResearchInput, ctx: WorkflowContext) {
   const notes = [...first, ...second];
   const written = await ctx.step("writeReport", () => writeReport(input.topic, brief, notes));
 
-  const texted = await ctx.step("text", () => textReport(input, written.report), TEXT_STEP);
+  const texted: Texted = input.text
+    ? await ctx.step("text", () => textReport(input, written.report), TEXT_STEP)
+    : { sent: false };
   const { runId } = ctx;
   if (input.clientId) {
     await ctx.step("announce", () => announce(runId, input, written.summary, texted), {
@@ -344,7 +348,7 @@ export async function announceFailure(
   await stepNotifyClient(input.clientId, {
     id: `${id}:failed`,
     event: "research",
-    data: { topic: input.topic, failed: true },
+    data: { topic: input.topic, said, failed: true },
     audio: spoken.pcm,
   });
 }
@@ -371,7 +375,7 @@ export async function announce(
   await stepNotifyClient(input.clientId, {
     id,
     event: "research",
-    data: { topic: input.topic },
+    data: { topic: input.topic, said },
     audio: spoken.pcm,
   });
 }

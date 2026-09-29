@@ -30,7 +30,9 @@ export type Entry =
        */
       clientId?: string;
     }
-  | { kind: "note"; at: number; text: string };
+  | { kind: "note"; at: number; text: string }
+  /** What the speaker SAID on its own (a reminder, a finished job): the assistant's turn. */
+  | { kind: "spoken"; at: number; text: string };
 
 /** Oldest dropped first; localStorage holds a few MB per origin. */
 export const MAX_ENTRIES = 300;
@@ -120,6 +122,10 @@ export function recordSession(
 
 export function addNote(history: readonly Entry[], text: string, now: number): Entry[] {
   return trim([...history, { kind: "note", at: now, text }]);
+}
+
+export function addSpoken(history: readonly Entry[], text: string, now: number): Entry[] {
+  return trim([...history, { kind: "spoken", at: now, text }]);
 }
 
 function trim(history: Entry[]): Entry[] {

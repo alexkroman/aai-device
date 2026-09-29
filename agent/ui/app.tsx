@@ -189,7 +189,12 @@ function History({
         </p>
       )}
       {entries.map((entry) =>
-        entry.kind === "note" ? (
+        entry.kind === "spoken" ? (
+          <div key={`v${entry.at}`} className="flex flex-col gap-2">
+            <p className="text-xs text-center opacity-40">{clock(entry.at)}</p>
+            <Bubble from="assistant" text={entry.text} />
+          </div>
+        ) : entry.kind === "note" ? (
           <p key={`n${entry.at}${entry.text}`} className="text-xs text-center opacity-50">
             {clock(entry.at)} · {entry.text}
           </p>

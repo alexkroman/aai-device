@@ -1,4 +1,11 @@
-import { addNote, type Entry, type Item, MAX_ENTRIES, recordSession } from "./history.ts";
+import {
+  addNote,
+  addSpoken,
+  type Entry,
+  type Item,
+  MAX_ENTRIES,
+  recordSession,
+} from "./history.ts";
 
 const user = (text: string): Item => ({ kind: "message", role: "user", text });
 const agent = (text: string): Item => ({ kind: "message", role: "assistant", text });
@@ -14,7 +21,9 @@ test("a session's conversation replaces its entry as it grows", () => {
 
 const texts = (h: Entry[]) =>
   h.map((e) =>
-    e.kind === "note" ? e.text : e.items.map((it) => (it.kind === "message" ? it.text : it.name)),
+    e.kind === "session"
+      ? e.items.map((it) => (it.kind === "message" ? it.text : it.name))
+      : e.text,
   );
 
 test("a resume replaying the history does not log it twice, and keeps the order", () => {
@@ -28,6 +37,22 @@ test("a resume replaying the history does not log it twice, and keeps the order"
     ["hi", "hello"],
     "Reminder: call the plumber",
     ["and now?", "now this"],
+  ]);
+});
+
+test("what the speaker says on its own is its own entry, in order, between turns", () => {
+  let h = recordSession([], "s1", [user("summarize slack"), agent("On it.")], 1);
+  h = addSpoken(h, "Three things happened in boardroom today.", 2);
+  h = recordSession(h, "s1", [user("summarize slack"), agent("On it."), user("thanks")], 3);
+  expect(h[1]).toEqual({
+    kind: "spoken",
+    at: 2,
+    text: "Three things happened in boardroom today.",
+  });
+  expect(texts(h)).toEqual([
+    ["summarize slack", "On it."],
+    "Three things happened in boardroom today.",
+    ["thanks"],
   ]);
 });
 

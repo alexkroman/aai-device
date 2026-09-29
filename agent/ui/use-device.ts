@@ -11,6 +11,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { clientId } from "./client-id.ts";
 import {
   addNote,
+  addSpoken,
   type Entry,
   type Item,
   loadHistory,
@@ -112,7 +113,13 @@ export function useDevice() {
     busy: () => busy.current,
     events: true,
     onEvent,
-    onNotice: (n) => note(noticeText(n)),
+    // What the speaker said out loud is its turn, word for word: shown as its bubble.
+    onNotice: (n) => {
+      const said = n.data?.said;
+      if (typeof said === "string" && said.trim())
+        setHistory((h) => addSpoken(h, said, Date.now()));
+      else note(noticeText(n));
+    },
   });
   const stopCues = inbox.stopPlayback;
 
@@ -279,7 +286,7 @@ function mirrorItem(event: { type: string } & Record<string, unknown>): Item | u
   }
 }
 
-/** The history line for a notice: what it said, as the device logs it. */
+/** The history line for a notice that carries no `said`: from a server older than this page. */
 function noticeText(n: InboxNotice): string {
   const text = n.data?.text ?? n.data?.topic;
   const what = typeof text === "string" ? `: ${text}` : "";

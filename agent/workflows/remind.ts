@@ -26,6 +26,12 @@ export async function remindFlow(input: RemindInput, ctx: WorkflowContext) {
  * device drops, not a second reminder.
  */
 export async function deliver(id: string, { clientId, text }: RemindInput): Promise<void> {
-  const spoken = await stepSpeak(`Reminder: ${text}`, { sampleRate: NOTICE_SAMPLE_RATE });
-  await stepNotifyClient(clientId, { id, event: "reminder", data: { text }, audio: spoken.pcm });
+  const said = `Reminder: ${text}`;
+  const spoken = await stepSpeak(said, { sampleRate: NOTICE_SAMPLE_RATE });
+  await stepNotifyClient(clientId, {
+    id,
+    event: "reminder",
+    data: { text, said },
+    audio: spoken.pcm,
+  });
 }

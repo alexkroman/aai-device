@@ -122,7 +122,8 @@ describe("the remind workflow", () => {
       expect(notice).toMatchObject({
         id: "wrun_7",
         event: "reminder",
-        data: { text: "flip the laundry" },
+        // `said` is what the page shows as the speaker's turn: the words it spoke.
+        data: { text: "flip the laundry", said: "Reminder: flip the laundry" },
       });
       expect(notice.audio?.length).toBe(3200);
     } finally {
