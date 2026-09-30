@@ -14,7 +14,7 @@ create table public.calls (
   must_not text not null default '',      -- beyond the fixed guardrails
   owner_name text not null default '',
   status text not null default 'draft'
-    check (status in ('draft', 'approved', 'dialing', 'in_progress', 'ended', 'failed', 'expired')),
+  check (status in ('draft', 'approved', 'dialing', 'in_progress', 'ended', 'failed', 'expired')),
   twilio_sid text,
   transcript jsonb not null default '[]',
   outcome text,

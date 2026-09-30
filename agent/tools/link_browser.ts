@@ -26,7 +26,7 @@ export default tool({
             ? `That code doesn't match. They can try ${result.attemptsLeft} more times.`
             : "That code doesn't match and no tries are left: ask them to get a new code on the page.",
         );
-      case "none_pending":
+      default: // none_pending
         return toolFailure("No browser is waiting to link, or its code expired.");
     }
   },

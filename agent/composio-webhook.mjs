@@ -27,7 +27,7 @@ const aaiBin = fileURLToPath(
 );
 
 const base = process.argv[2]?.replace(/\/+$/, "");
-if (!base || !/^https:\/\//.test(base)) {
+if (!(base && /^https:\/\//.test(base))) {
   console.error("usage: composio-webhook.mjs https://<public host of this agent>");
   process.exit(2);
 }

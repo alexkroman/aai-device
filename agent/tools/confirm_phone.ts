@@ -22,7 +22,7 @@ export default tool({
             ? `That code doesn't match. They can try ${result.attemptsLeft} more times.`
             : "That code doesn't match and no tries are left: offer to text a new one.",
         );
-      case "none_pending":
+      default: // none_pending
         return toolFailure(
           "There is no code waiting, or it expired. Offer to text a new one with update_profile.",
         );

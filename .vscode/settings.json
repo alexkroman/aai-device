@@ -1,11 +1,28 @@
 {
-    // CMake Tools can't configure an ESP-IDF project (it needs export.sh's environment),
-    // and as IntelliSense's configuration provider it left every include unresolved.
-    // IntelliSense reads the compile databases the real builds emit instead
-    // (.vscode/c_cpp_properties.json); run `make build-firmware` once to create them.
-    "cmake.configureOnOpen": false,
-    "cmake.ignoreCMakeListsMissing": true,
-    "C_Cpp.default.configurationProvider": null,
-    "C_Cpp.errorSquiggles": "enabled",
-    "files.associations": { "*.h": "c" }
+  // CMake Tools can't configure an ESP-IDF project (it needs export.sh's environment),
+  // and as IntelliSense's configuration provider it left every include unresolved.
+  // IntelliSense reads the compile databases the real builds emit instead
+  // (.vscode/c_cpp_properties.json); run `make build-firmware` once to create them.
+  "cmake.configureOnOpen": false,
+  "cmake.ignoreCMakeListsMissing": true,
+  "C_Cpp.default.configurationProvider": null,
+  "C_Cpp.errorSquiggles": "enabled",
+  "files.associations": { "*.h": "c" },
+
+  // Format on save, with the formatter `make format` and the pre-commit hook use for each
+  // language (the extensions are in extensions.json). CMake, SQL and shell have no editor
+  // formatter wired here: `make format` and the hook cover them.
+  "editor.formatOnSave": true,
+  "editor.codeActionsOnSave": { "source.organizeImports.biome": "explicit" },
+  "biome.requireConfiguration": true,
+  "[typescript]": { "editor.defaultFormatter": "biomejs.biome" },
+  "[typescriptreact]": { "editor.defaultFormatter": "biomejs.biome" },
+  "[javascript]": { "editor.defaultFormatter": "biomejs.biome" },
+  "[json]": { "editor.defaultFormatter": "biomejs.biome" },
+  "[jsonc]": { "editor.defaultFormatter": "biomejs.biome" },
+  "[css]": { "editor.defaultFormatter": "biomejs.biome" },
+  "[python]": { "editor.defaultFormatter": "charliermarsh.ruff" },
+  // cpptools' formatter reads firmware/.clang-format.
+  "[c]": { "editor.defaultFormatter": "ms-vscode.cpptools" },
+  "C_Cpp.formatting": "clangFormat"
 }

@@ -1,0 +1,4 @@
+# Prettier formats this repo's hand-written YAML only (make lint-yaml / make format).
+# pnpm writes these itself.
+**/pnpm-lock.yaml
+**/pnpm-workspace.yaml

@@ -151,7 +151,6 @@ describe("composioMcp", () => {
       if (path === "/tool_router/session") return { body: { session_id: "trs_bg" } };
       if (path === "/tool_router/session/trs_bg")
         return { body: { mcp: { url: "https://mcp.composio.test/trs_bg" } } };
-      return undefined;
     });
     expect(await resolve(user)).toBe("https://mcp.composio.test/trs_bg");
     const [created] = composioHits();
@@ -173,7 +172,6 @@ describe("composioMcp", () => {
         return { status: 404, body: { error: { message: "Tool router session not found" } } };
       if (path === "/tool_router/session/trs_m2")
         return { body: { mcp: { url: "https://mcp.composio.test/trs_m2" } } };
-      return undefined;
     });
     expect(await resolve(user)).toBe("https://mcp.composio.test/trs_m2");
     expect(made).toBe(2);

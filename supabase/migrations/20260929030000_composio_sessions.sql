@@ -40,5 +40,5 @@ alter table public.app_watches enable row level security;
 alter table public.app_events enable row level security;
 
 grant select, insert, update, delete
-  on public.composio_sessions, public.app_watches, public.app_events
-  to service_role;
+on public.composio_sessions, public.app_watches, public.app_events
+to service_role;

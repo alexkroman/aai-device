@@ -1,0 +1,103 @@
+name: Check
+
+# `make check`, split into jobs that run side by side. Every step is a Makefile target, so a
+# red job reproduces locally with the same command. What CI can't run: the on-device and
+# acoustic suites (make test-device / test-e2e need the board) and the LIVE evals (a model
+# and a key; the scripted ones run here).
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # agent/ and caller/ link the SDK from a checkout beside this repo
+  # (../../aai/agent-builtin-api-tools from each), as on a laptop. CI uses the SDK's main.
+  AAI_SDK_REPO: https://github.com/alexkroman/agent
+  AAI_SDK_REF: main
+
+jobs:
+  agents:
+    name: Agents (Biome, tsc, tests, scripted evals, SDK contract; root JSON)
+    runs-on: ubuntu-latest
+    env:
+      AAI_SDK: ${{ github.workspace }}/../aai/agent-builtin-api-tools
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - name: Check out and install the SDK
+        run: |
+          git clone --depth 1 --branch "$AAI_SDK_REF" "$AAI_SDK_REPO" "$AAI_SDK"
+          cd "$AAI_SDK" && pnpm install --frozen-lockfile
+      - name: Install the agents
+        run: |
+          (cd agent && pnpm install --frozen-lockfile)
+          (cd caller && pnpm install --frozen-lockfile)
+      - run: make lint-agent lint-caller lint-json
+      - run: make test-agent test-caller
+      - run: make eval-agent eval-caller
+      - run: make check-contract
+
+  firmware:
+    name: Firmware (build, size, clang-format, clang-tidy, cppcheck, host tests, fuzz, coverage)
+    runs-on: ubuntu-latest
+    container: espressif/idf:v5.5
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+      # The host tests, fuzzers and coverage need upstream LLVM with its sanitizer runtimes.
+      - name: Install LLVM and cppcheck
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq clang llvm clang-tidy cppcheck >/dev/null
+          v=$(clang -dumpversion | cut -d. -f1)
+          apt-get install -y -qq "libclang-rt-$v-dev" >/dev/null 2>&1 || true
+      - uses: astral-sh/setup-uv@v6
+      # The container runs steps without its entrypoint, so ESP-IDF's environment is loaded
+      # here, and the Makefile sees IDF_PATH and uses it as is.
+      - name: Build both firmware apps and check the memory budget
+        run: . "$IDF_PATH/export.sh" >/dev/null && make build-firmware check-size
+      - name: Lint C
+        run: . "$IDF_PATH/export.sh" >/dev/null && make lint-format lint-tidy lint-cppcheck
+      - name: Host tests, fuzzing and the coverage floor
+        run: . "$IDF_PATH/export.sh" >/dev/null && make test-host test-fuzz test-coverage
+
+  supabase:
+    name: Supabase (migrations from zero, pgTAP, schema lint)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      # Pinned: `latest` asks GitHub's API for the newest release without a token, and that
+      # is rate limited per runner IP (it failed a run). Bump it on purpose.
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.118.0
+      - run: make test-supabase SUPABASE_UP='supabase db start'
+
+  lint:
+    name: Lint and format (Python, SQL, shell, CMake, workflows, Markdown, TOML, Kconfig, YAML)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+      # markdownlint and Prettier ship on npm only.
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - run: make lint-python lint-sql lint-shell lint-cmake
+      - run: make lint-actions lint-markdown lint-toml lint-kconfig lint-yaml

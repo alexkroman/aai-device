@@ -194,10 +194,7 @@ describe("claiming a call (sessionContext)", () => {
     expect(first).toHaveProperty("instructions");
     expect(second).toEqual({ refuse: "no approved call with that id" });
     expect(
-      requests(net).map((r) => [
-        r.method,
-        (r.body as { call_session_id: string }).call_session_id,
-      ]),
+      requests(net).map((r) => [r.method, (r.body as { call_session_id: string }).call_session_id]),
     ).toEqual([
       ["PATCH", "s1"],
       ["PATCH", "s2"],

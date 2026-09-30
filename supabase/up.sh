@@ -11,8 +11,14 @@ cd "$(dirname "$0")/.."
 if ! docker info >/dev/null 2>&1; then
   echo "Starting Docker Desktop…" >&2
   open -a Docker
-  for _ in $(seq 1 60); do docker info >/dev/null 2>&1 && break; sleep 2; done
-  docker info >/dev/null 2>&1 || { echo "Docker did not start" >&2; exit 1; }
+  for _ in $(seq 1 60); do
+    docker info >/dev/null 2>&1 && break
+    sleep 2
+  done
+  docker info >/dev/null 2>&1 || {
+    echo "Docker did not start" >&2
+    exit 1
+  }
 fi
 
 if ! status=$(supabase status -o env 2>/dev/null) || ! grep -q '^API_URL=' <<<"$status"; then
@@ -32,7 +38,10 @@ secret=$(get SECRET_KEY)
 db=$(get DB_URL)
 # The storage API checks Authorization as a JWT, so uploads get the service-role JWT.
 service_jwt=$(get SERVICE_ROLE_KEY)
-[ -n "$api" ] && [ -n "$secret" ] && [ -n "$db" ] || { echo "supabase status is missing keys" >&2; exit 1; }
+if [ -z "$api" ] || [ -z "$secret" ] || [ -z "$db" ]; then
+  echo "supabase status is missing keys" >&2
+  exit 1
+fi
 
 cat <<EOF
 export SUPABASE_URL='$api'

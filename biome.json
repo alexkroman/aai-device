@@ -1,0 +1,232 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.5.12/schema.json",
+  "root": true,
+  "files": {
+    "includes": [
+      "**",
+      "!**/node_modules",
+      "!**/dist",
+      "!**/.aai",
+      "!**/.workflow-data",
+      "!**/coverage",
+      "!firmware",
+      "!supabase",
+      "!.claude",
+      "!.agents"
+    ]
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "preset": "recommended",
+      "correctness": {
+        "preset": "recommended",
+        "noUnusedImports": "error",
+        "noUnusedVariables": "error",
+        "noUndeclaredDependencies": "off",
+        "useImportExtensions": "off",
+        "noGlobalDirnameFilename": "error",
+        "noPrivateImports": "error",
+        "noUndeclaredVariables": "error",
+        "noUnresolvedImports": "off"
+      },
+      "style": {
+        "preset": "recommended",
+        "noNonNullAssertion": "off",
+        "useNodejsImportProtocol": "error",
+        "useConsistentBuiltinInstantiation": "error",
+        "useCollapsedElseIf": "error",
+        "useExplicitLengthCheck": "off",
+        "useForOf": "error",
+        "useThrowNewError": "error",
+        "useThrowOnlyError": "error",
+        "noDefaultExport": "off",
+        "useNamingConvention": "off",
+        "useFilenamingConvention": {
+          "level": "error",
+          "options": {
+            "filenameCases": ["kebab-case"],
+            "requireAscii": true
+          }
+        },
+        "useBlockStatements": "off",
+        "noParameterAssign": "error",
+        "useConsistentArrayType": "error",
+        "noEnum": "error",
+        "noShoutyConstants": "error",
+        "useImportType": "error",
+        "noNestedTernary": "off",
+        "useNumberNamespace": "error",
+        "noUselessElse": "error",
+        "noCommonJs": "error",
+        "noExportedImports": "error",
+        "noSubstr": "error",
+        "useTrimStartEnd": "error",
+        "useDefaultParameterLast": "error",
+        "useAtIndex": "error",
+        "noDoneCallback": "error",
+        "noNamespace": "error",
+        "noParameterProperties": "error",
+        "noUnusedTemplateLiteral": "error",
+        "noYodaExpression": "error",
+        "useAsConstAssertion": "error",
+        "useCollapsedIf": "error",
+        "useConsistentArrowReturn": "error",
+        "useConsistentCurlyBraces": "error",
+        "useDefaultSwitchClause": "error",
+        "useNodeAssertStrict": "error",
+        "useNumericSeparators": "error",
+        "useUnifiedTypeSignatures": "error",
+        "noMultiAssign": "error",
+        "noMultilineString": "error",
+        "useSpreadOverApply": "error",
+        "useErrorCause": "error"
+      },
+      "suspicious": {
+        "preset": "recommended",
+        "noExplicitAny": "error",
+        "noConsole": "off",
+        "noEmptyBlockStatements": "off",
+        "useErrorMessage": "error",
+        "noMisplacedAssertion": "error",
+        "noAssignInExpressions": "error",
+        "noDoubleEquals": "error",
+        "noEvolvingTypes": "off",
+        "noSkippedTests": "error",
+        "useGuardForIn": "error",
+        "noConstantBinaryExpressions": "error",
+        "noDeprecatedImports": "error",
+        "noDuplicateDependencies": "error",
+        "noExportsInTest": "error",
+        "noFocusedTests": "error",
+        "noImportCycles": "error",
+        "noUnusedExpressions": "error",
+        "noNestedPromises": "error",
+        "noUnnecessaryConditions": "off",
+        "noProto": "error",
+        "noReturnAssign": "error",
+        "noParametersOnlyUsedInRecursion": "error",
+        "useArraySortCompare": "error",
+        "noArrayIndexKey": "off"
+      },
+      "complexity": {
+        "preset": "recommended",
+        "noExcessiveCognitiveComplexity": "off",
+        "noStaticOnlyClass": "error",
+        "useDateNow": "error",
+        "useSimplifiedLogicExpression": "error",
+        "noForEach": "error",
+        "noUselessUndefinedInitialization": "error",
+        "noUselessStringConcat": "error",
+        "noExcessiveNestedTestSuites": "error",
+        "noImplicitCoercions": "error",
+        "noUselessCatchBinding": "error",
+        "noUselessUndefined": "error",
+        "useWhile": "error",
+        "noUselessReturn": "error",
+        "noRedundantDefaultExport": "error",
+        "useArrayFind": "error"
+      },
+      "performance": {
+        "useTopLevelRegex": "off",
+        "noAccumulatingSpread": "error",
+        "noReExportAll": "error"
+      },
+      "security": {
+        "preset": "recommended",
+        "noSecrets": "error",
+        "noScriptUrl": "error"
+      },
+      "a11y": {
+        "preset": "none"
+      },
+      "nursery": {
+        "noFloatingPromises": "error",
+        "noMisusedPromises": "error",
+        "noConditionalExpect": "error",
+        "useArraySome": "error",
+        "useExhaustiveSwitchCases": "error",
+        "useImportsFirst": "error",
+        "useNullishCoalescing": "error"
+      }
+    }
+  },
+  "overrides": [
+    {
+      "includes": [".vscode/**"],
+      "json": {
+        "parser": {
+          "allowComments": true,
+          "allowTrailingCommas": true
+        }
+      }
+    },
+    {
+      "includes": ["**/_*-harness.ts"],
+      "linter": {
+        "rules": {
+          "nursery": {
+            "noConditionalExpect": "off"
+          },
+          "suspicious": {
+            "noMisplacedAssertion": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "**/*.test.ts",
+        "**/*.test.tsx",
+        "**/_*test-utils.ts",
+        "**/_jsdom-setup.ts",
+        "**/vitest*.config.ts",
+        "**/_*-fuzz-*.ts"
+      ],
+      "linter": {
+        "rules": {
+          "correctness": {
+            "noUndeclaredDependencies": "off"
+          },
+          "nursery": {
+            "noConditionalExpect": "off",
+            "useImportsFirst": "off"
+          },
+          "security": {
+            "noSecrets": "off"
+          },
+          "suspicious": {
+            "noExportsInTest": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["**/tools/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "useFilenamingConvention": "off"
+          }
+        }
+      }
+    }
+  ],
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 100
+  },
+  "css": {
+    "parser": {
+      "tailwindDirectives": true
+    }
+  },
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "double",
+      "semicolons": "always"
+    }
+  }
+}

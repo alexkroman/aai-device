@@ -10,4 +10,7 @@ idf_component_register(
     EMBED_FILES "sounds/wake_chime.pcm"
 )
 
-target_compile_options(${COMPONENT_LIB} PRIVATE -Werror -Wall -Wextra -Wshadow -Wformat=2)
+target_compile_options(
+    ${COMPONENT_LIB}
+    PRIVATE -Werror -Wall -Wextra -Wshadow -Wformat=2
+)

@@ -31,7 +31,7 @@ export default tool({
     const clientId = sessionClientId(ctx);
     // A browser tab has no speaker to say it on, and a text they didn't ask for is the
     // one thing this must not do: ask instead.
-    if (!clientId && !text) {
+    if (!(clientId || text)) {
       return toolFailure(
         "There's no speaker here to say the results on. Ask whether to text them the report.",
       );

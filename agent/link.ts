@@ -57,7 +57,7 @@ export async function claimLinkCode(
     { id: number; code_sha256: string; browser_client: string; attempts: number }[]
   >(
     ctx,
-    `/link_codes?select=id,code_sha256,browser_client,attempts&speaker_client=is.null` +
+    "/link_codes?select=id,code_sha256,browser_client,attempts&speaker_client=is.null" +
       `&expires_at=gt.${new Date(now).toISOString()}&attempts=lt.${MAX_LINK_ATTEMPTS}`,
   );
   if (pending.length === 0) return { status: "none_pending" };
@@ -85,7 +85,7 @@ export async function linkStatus(
   const rows = await rest<{ speaker_client: string | null }[]>(
     ctx,
     `/link_codes?select=speaker_client&browser_client=eq.${enc(browserClient)}` +
-      `&speaker_client=not.is.null&order=created_at.desc&limit=1`,
+      "&speaker_client=not.is.null&order=created_at.desc&limit=1",
   );
   return rows[0]?.speaker_client ?? undefined;
 }

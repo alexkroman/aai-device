@@ -1,8 +1,7 @@
 import { tool, toolFailure } from "@alexkroman1/aai";
-import { fetchJson } from "@alexkroman1/aai/tools";
 import { isToolFailure } from "@alexkroman1/aai/utils";
 import { z } from "zod";
-import { locate, locationField } from "../google.ts";
+import { askGoogle, locate, locationField, pollenApi } from "../google.ts";
 
 // Google's Pollen API, on the `google_places` key (the project needs the Pollen
 // API enabled). Open-Meteo has pollen too, but only for Europe.
@@ -46,11 +45,16 @@ export default tool({
     const at = await locate(location, ctx);
     if (isToolFailure(at)) return at;
 
-    const url =
-      `https://pollen.googleapis.com/v1/forecast:lookup?days=1&plantsDescription=false` +
-      `&location.latitude=${at.latitude}&location.longitude=${at.longitude}`;
-    const res = await fetchJson(url, { headers: { "x-goog-api-key": at.key }, signal: ctx.signal });
-    if (isToolFailure(res)) return toolFailure(`Pollen lookup failed: ${res.error}`);
+    const query = new URLSearchParams({
+      days: "1",
+      plantsDescription: "false",
+      "location.latitude": String(at.latitude),
+      "location.longitude": String(at.longitude),
+    });
+    const res = await askGoogle("Pollen lookup", () =>
+      pollenApi(ctx, "GET", `/forecast:lookup?${query}`),
+    );
+    if (isToolFailure(res)) return res;
     const today = PollenResponse.parse(res).dailyInfo?.[0];
     if (!today) return toolFailure("No pollen forecast for that place.");
 

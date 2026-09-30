@@ -28,7 +28,7 @@ export const locationField = z
   .optional()
   .describe("A city or place name, e.g. 'Austin, TX'. Omit for the caller's home.");
 
-export type Located = { key: string; latitude: number; longitude: number; place: string };
+export type Located = { latitude: number; longitude: number; place: string };
 
 /** Google's own message in a refused body, first sentence only: the model reads it aloud. */
 function googleSentence(body: unknown): string | undefined {
@@ -42,12 +42,46 @@ export async function googleError(res: Response): Promise<string> {
   return googleSentence(await res.json().catch(() => ({}))) ?? `HTTP ${res.status}`;
 }
 
+const googleKey = (env: Readonly<Partial<Record<string, string>>>) => ({
+  "x-goog-api-key": requireEnv({ env }, "GOOGLE_PLACES_API_KEY"),
+});
+
 const places = jsonClient({
   label: "Google Places",
   baseUrl: "https://places.googleapis.com/v1",
-  headers: (env) => ({ "x-goog-api-key": requireEnv({ env }, "GOOGLE_PLACES_API_KEY") }),
+  headers: googleKey,
   errorMessage: googleSentence,
 });
+
+// The environment APIs, on the same key. jsonClient, not the SDK's fetchJson: that one takes
+// the builtins' screened fetch, which is for model-chosen URLs and which an eval's network
+// cannot see, so an eval's lookups went to the real Google with a fake key.
+export const pollenApi = jsonClient({
+  label: "Google Pollen",
+  baseUrl: "https://pollen.googleapis.com/v1",
+  headers: googleKey,
+  errorMessage: googleSentence,
+});
+
+export const airQualityApi = jsonClient({
+  label: "Google Air Quality",
+  baseUrl: "https://airquality.googleapis.com/v1",
+  headers: googleKey,
+  errorMessage: googleSentence,
+});
+
+/** A Google API call, with a refusal answered as a failure the model can read out. */
+export async function askGoogle(
+  what: string,
+  call: () => Promise<unknown>,
+): Promise<unknown | ToolFailure> {
+  try {
+    return await call();
+  } catch (err) {
+    if (!(err instanceof HttpError)) throw err;
+    return toolFailure(`${what} failed: ${googleSentence(err.body) ?? `HTTP ${err.status}`}`);
+  }
+}
 
 export type Geocoded = { latitude: number; longitude: number; formattedAddress: string };
 
@@ -76,16 +110,10 @@ export async function locate(
   location: string | undefined,
   ctx: ToolContext,
 ): Promise<Located | ToolFailure> {
-  const key = requireEnv(ctx, "GOOGLE_PLACES_API_KEY");
   if (location) {
     const found = await geocode(location, ctx);
     if (isToolFailure(found)) return found;
-    return {
-      key,
-      latitude: found.latitude,
-      longitude: found.longitude,
-      place: found.formattedAddress,
-    };
+    return { latitude: found.latitude, longitude: found.longitude, place: found.formattedAddress };
   }
 
   const profile = await readProfile(ctx);
@@ -94,9 +122,9 @@ export async function locate(
   const [lat, lng] = (profile.home_coords ?? "").split(",").map(Number);
   if (lat !== undefined && lng !== undefined && Number.isFinite(lat) && Number.isFinite(lng)) {
     // Never read the home street address back.
-    return { key, latitude: lat, longitude: lng, place: "home" };
+    return { latitude: lat, longitude: lng, place: "home" };
   }
   const found = await geocode(profile.home_address, ctx);
   if (isToolFailure(found)) return found;
-  return { key, latitude: found.latitude, longitude: found.longitude, place: "home" };
+  return { latitude: found.latitude, longitude: found.longitude, place: "home" };
 }

@@ -1,0 +1,8 @@
+{
+  "recommendations": [
+    "biomejs.biome",
+    "charliermarsh.ruff",
+    "ms-vscode.cpptools",
+    "editorconfig.editorconfig"
+  ]
+}

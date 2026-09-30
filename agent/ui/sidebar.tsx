@@ -531,7 +531,7 @@ function Memories() {
         onSubmit={(e) => {
           e.preventDefault();
           if (!draft.trim()) return;
-          run(api("POST", "/memories", { text: draft }).then(() => setDraft("")));
+          void run(api("POST", "/memories", { text: draft }).then(() => setDraft("")));
         }}
       >
         <input
@@ -568,7 +568,7 @@ function EditableText(props: { value: string; onSave: (value: string) => void; r
   }
   return (
     <textarea
-      // biome-ignore lint/a11y/noAutofocus: opened by the click that asked to edit it
+      // autoFocus: opened by the click that asked to edit it
       autoFocus
       className={`${input} flex-1 font-sans`}
       rows={props.rows ?? 2}

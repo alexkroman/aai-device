@@ -30,4 +30,4 @@ create index phone_verification_created_at on public.phone_verification (created
 
 -- This CLI no longer grants new tables to the API roles, so the agent's is explicit.
 grant select, insert, update, delete on public.profile, public.phone_verification
-  to service_role;
+to service_role;

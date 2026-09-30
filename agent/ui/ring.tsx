@@ -38,7 +38,7 @@ export function Ring({ led, size = 224 }: { led: Led; size?: number }) {
         const lit = led !== "off" && level > 0;
         return (
           <span
-            // biome-ignore lint/suspicious/noArrayIndexKey: the ring's LEDs are positional
+            // Index keys: the ring's LEDs are positional
             key={i}
             className="absolute size-5 rounded-full transition-colors duration-150"
             style={{
