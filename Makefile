@@ -65,7 +65,7 @@ FUZZ_SRCS := $(wildcard $(FW)/test/fuzz/fuzz_*.c)
 FUZZ_SECS ?= 15
 DEVICE_STAMP := $(FW)/test/device/.last-pass
 # The local SDK checkout agent/package.json links against. Keep the two in step.
-AAI_SDK   ?= $(HOME)/Code/aai/agent-builtin-api-tools
+AAI_SDK   ?= $(HOME)/Code/aai/agent
 
 .PHONY: composio-webhook check require-idf lint lint-format lint-tidy lint-cppcheck lint-python lint-agent lint-caller \
         lint-shell lint-sql lint-cmake lint-actions lint-markdown lint-json lint-toml lint-kconfig lint-yaml sdk-dist build-firmware test-host test-fuzz test-coverage check-contract \

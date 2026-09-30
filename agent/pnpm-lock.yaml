@@ -23,17 +23,17 @@ importers:
   .:
     dependencies:
       '@alexkroman1/aai':
-        specifier: link:../../aai/agent-builtin-api-tools/packages/aai
-        version: link:../../aai/agent-builtin-api-tools/packages/aai
+        specifier: link:../../aai/agent/packages/aai
+        version: link:../../aai/agent/packages/aai
       '@alexkroman1/aai-cli':
-        specifier: link:../../aai/agent-builtin-api-tools/packages/aai-cli
-        version: link:../../aai/agent-builtin-api-tools/packages/aai-cli
+        specifier: link:../../aai/agent/packages/aai-cli
+        version: link:../../aai/agent/packages/aai-cli
       '@alexkroman1/aai-runtime':
-        specifier: link:../../aai/agent-builtin-api-tools/packages/aai-runtime
-        version: link:../../aai/agent-builtin-api-tools/packages/aai-runtime
+        specifier: link:../../aai/agent/packages/aai-runtime
+        version: link:../../aai/agent/packages/aai-runtime
       '@alexkroman1/aai-ui':
-        specifier: link:../../aai/agent-builtin-api-tools/packages/aai-ui
-        version: link:../../aai/agent-builtin-api-tools/packages/aai-ui
+        specifier: link:../../aai/agent/packages/aai-ui
+        version: link:../../aai/agent/packages/aai-ui
       react:
         specifier: 19.2.8
         version: 19.2.8
