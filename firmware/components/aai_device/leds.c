@@ -15,9 +15,9 @@ static leds_state_t s_state = -1;
 static unsigned s_spin_pos;
 
 static const uint8_t k_colors[][3] = {
-    [LEDS_OFF] = {0, 0, 0},        [LEDS_BOOTING] = {24, 24, 24}, [LEDS_CONNECTING] = {8, 8, 8},
-    [LEDS_LISTENING] = {0, 0, 40}, [LEDS_THINKING] = {28, 0, 40}, [LEDS_SPEAKING] = {0, 30, 30},
-    [LEDS_ERROR] = {40, 0, 0},
+    [LEDS_OFF] = {0, 0, 0},        [LEDS_BOOTING] = {24, 24, 24},     [LEDS_CONNECTING] = {8, 8, 8},
+    [LEDS_LISTENING] = {0, 0, 40}, [LEDS_THINKING] = {28, 0, 40},     [LEDS_SPEAKING] = {0, 30, 30},
+    [LEDS_ERROR] = {40, 0, 0},     [LEDS_PROVISIONING] = {40, 16, 0},
 };
 
 static void fill(const uint8_t rgb[3])

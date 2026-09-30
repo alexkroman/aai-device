@@ -34,7 +34,7 @@ AAI_SDK   ?= $(HOME)/Code/aai/agent-builtin-api-tools
 
 .PHONY: composio-webhook check require-idf lint lint-format lint-tidy lint-cppcheck lint-python lint-agent lint-caller \
         build-firmware test-host test-fuzz test-coverage check-contract check-size test-agent \
-        device-freshness test-device test-e2e format agent caller supabase flash monitor
+        device-freshness test-device test-e2e format agent caller supabase flash monitor ota-serve coredump
 
 check: require-idf lint build-firmware test-host test-fuzz test-coverage check-contract check-size \
        test-agent device-freshness
@@ -204,3 +204,17 @@ flash: require-idf
 
 monitor: require-idf
 	cd $(FW) && $(IDF) idf.py monitor
+
+# Serve the last build for over-the-air updates: set CONFIG_AAI_OTA_URL to
+# http://<this machine>.local:$(OTA_PORT)/aai_device.bin (ota.h). Speakers pick up any build
+# whose version (git describe) differs from theirs; `make build-firmware` here, then wait.
+OTA_PORT ?= 8070
+ota-serve: build-firmware
+	@echo "serving http://$$(hostname -s).local:$(OTA_PORT)/aai_device.bin"
+	cd $(FW)/build && python3 -m http.server $(OTA_PORT)
+
+# The core dump the last crash saved (crash.h), decoded against this build's ELF, then
+# cleared so the next boot doesn't report it again. Same build as the crashed firmware.
+coredump: require-idf
+	cd $(FW) && $(IDF) idf.py coredump-info
+	cd $(FW) && $(IDF) python "$$IDF_PATH/components/partition_table/parttool.py" erase_partition --partition-name=coredump

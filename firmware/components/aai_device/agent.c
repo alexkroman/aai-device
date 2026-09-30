@@ -7,8 +7,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include "aai_events.h"
+#include "audio_rate.h"
 #include "board.h"
 #include "cJSON.h"
+#include "discovery.h"
 #include "esp_attr.h"
 #include "esp_crt_bundle.h"
 #include "esp_heap_caps.h"
@@ -22,7 +24,6 @@
 #include "inbox.h"
 #include "lwip/sockets.h"
 #include "protocol.h"
-#include "resample.h"
 #include "sdkconfig.h"
 
 static const char *TAG = "agent";
@@ -80,7 +81,7 @@ static SemaphoreHandle_t s_client_free;
 static agent_observer_t s_observer;  // tests only
 
 static volatile int64_t s_convert_max_us;  // diagnostics: slowest TTS conversion call
-static resampler_t s_tts_rs;               // agent TTS rate -> board rate; owned by the websocket task
+static audio_rate_t s_tts_rs;              // agent TTS rate -> board rate; owned by the websocket task
 static char s_session_id[96];
 // Only resume sessions with a conversation: the server re-greets (on purpose) when
 // a resumed session has no history, and that greeting would mute the question.
@@ -192,11 +193,14 @@ static void on_audio(const uint8_t *data, size_t len, bool frame_start)
     }
     size_t n = pcm_align(&aligner, data, len, in);
     // Slice so the output fits `out` at any negotiated rate (e.g. 8 kHz TTS upsamples 2x).
-    size_t slice = resampler_max_in(&s_tts_rs, sizeof(out) / sizeof(out[0]));
-    for (size_t pos = 0; slice > 0 && pos < n; pos += slice) {
+    size_t slice = sizeof(in) / sizeof(in[0]);
+    while (slice > 1 && audio_rate_max_out(&s_tts_rs, slice) > sizeof(out) / sizeof(out[0])) {
+        slice /= 2;
+    }
+    for (size_t pos = 0; pos < n; pos += slice) {
         size_t chunk = n - pos < slice ? n - pos : slice;
         int64_t t0 = now_us();
-        size_t produced = resampler_process(&s_tts_rs, in + pos, chunk, out);
+        size_t produced = audio_rate_process(&s_tts_rs, in + pos, chunk, out);
         int64_t took = now_us() - t0;
         s_convert_max_us = took > s_convert_max_us ? took : s_convert_max_us;
         if (xStreamBufferSend(s_spk_sb, out, produced * 2, 0) != produced * 2) {
@@ -230,7 +234,7 @@ static void on_event(const char *json, size_t len)
             strlcpy(s_session_id, msg.session_id, sizeof(s_session_id));
         }
         ESP_LOGI(TAG, "session %s: mic %d Hz, tts %d Hz", s_session_id, s_in_rate, s_tts_rate);
-        resampler_init(&s_tts_rs, s_tts_rate, BOARD_SAMPLE_RATE);
+        audio_rate_open(&s_tts_rs, s_tts_rate, BOARD_SAMPLE_RATE);
         send_json("{\"type\":\"audio_ready\"}");
         s_configured = true;
         xTaskNotifyGive(s_sender);
@@ -326,8 +330,9 @@ static void ws_handler(void *arg, esp_event_base_t base, int32_t id, void *event
 static void sender_task(void *arg)
 {
     EXT_RAM_BSS_ATTR static int16_t in[SEND_CHUNK];
-    EXT_RAM_BSS_ATTR static int16_t out[SEND_CHUNK * 2 + 4];
-    resampler_t rs;  // board rate -> agent input rate; owned by this task
+    // A 48 kHz agent upsamples 3x.
+    EXT_RAM_BSS_ATTR static int16_t out[SEND_CHUNK * 3 + 64];
+    static audio_rate_t rs;  // board rate -> agent input rate; owned by this task
     bool was_configured = false;
     int64_t last_progress = 0;
 
@@ -343,17 +348,19 @@ static void sender_task(void *arg)
             continue;
         }
         if (!was_configured) {
-            resampler_init(&rs, BOARD_SAMPLE_RATE, s_in_rate);
+            audio_rate_open(&rs, BOARD_SAMPLE_RATE, s_in_rate);
             was_configured = true;
         }
         // Read only as much as fits `out` after resampling (48 kHz agents upsample 3x).
-        size_t want = resampler_max_in(&rs, sizeof(out) / sizeof(out[0]));
-        want = want < SEND_CHUNK ? want : SEND_CHUNK;
+        size_t want = SEND_CHUNK;
+        while (want > 1 && audio_rate_max_out(&rs, want) > sizeof(out) / sizeof(out[0])) {
+            want /= 2;
+        }
         size_t got = xStreamBufferReceive(s_mic_sb, in, want * 2, pdMS_TO_TICKS(50)) / 2;
         // Checked per frame: after an abort this loop runs until agent_stop() clears s_active,
         // and every send in between would log another failed write on the dead socket.
         if (got > 0 && esp_websocket_client_is_connected(s_ws)) {
-            size_t n = resampler_process(&rs, in, got, out);
+            size_t n = audio_rate_process(&rs, in, got, out);
             esp_websocket_client_send_bin(s_ws, (const char *)out, n * 2, pdMS_TO_TICKS(WS_SEND_TIMEOUT_MS));
         }
         size_t buffered = xStreamBufferBytesAvailable(s_spk_sb);
@@ -501,7 +508,8 @@ void agent_init(void)
     // One client for the device's lifetime. Creating/destroying it per session
     // fragments internal RAM until its task stack can no longer be allocated.
     esp_websocket_client_config_t cfg = {
-        .uri = CONFIG_AAI_AGENT_URL,
+        // A placeholder: agent_start() sets the real one (configured or found on the LAN).
+        .uri = "ws://localhost/websocket",
         .buffer_size = WS_BUFFER_SIZE,
         .task_stack = 6144,
         .task_prio = 8,
@@ -520,6 +528,13 @@ void agent_init(void)
 void agent_start(void)
 {
     char uri[512];
+    char base[DISCOVERY_URL_MAX];
+    if (!discovery_agent_url(base, sizeof(base))) {
+        ESP_LOGE(TAG, "no agent to connect to: none found on the LAN (is `make agent` running?)");
+        discovery_refresh();
+        aai_events_post(AAI_EVENT_SESSION_CLOSED, NULL, 0);
+        return;
+    }
     bool resume = s_session_id[0] && s_session_has_turns && now_us() - s_session_end_us < RESUME_WINDOW_US;
     if (!resume) {
         s_session_has_turns = false;
@@ -528,13 +543,13 @@ void agent_start(void)
     // An address too long for the buffer costs only "near me", never the connection.
     // ?client= is how a tool finds this device again later (inbox.h).
     const char *client = inbox_client_id();
-    if (!proto_session_url(CONFIG_AAI_AGENT_URL, sid, client, CONFIG_AAI_DEVICE_ADDRESS, uri, sizeof(uri))) {
+    if (!proto_session_url(base, sid, client, CONFIG_AAI_DEVICE_ADDRESS, uri, sizeof(uri))) {
         ESP_LOGW(TAG, "device address too long for the session URL; connecting without it");
-        proto_session_url(CONFIG_AAI_AGENT_URL, sid, client, NULL, uri, sizeof(uri));
+        proto_session_url(base, sid, client, NULL, uri, sizeof(uri));
     }
     // Not `uri`: it carries the device's street address.
-    ESP_LOGI(TAG, "connecting to %s%s (internal heap free %u, largest block %u)", CONFIG_AAI_AGENT_URL,
-             resume ? " (resume)" : "", (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+    ESP_LOGI(TAG, "connecting to %s%s (internal heap free %u, largest block %u)", base, resume ? " (resume)" : "",
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
              (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
 
     // Waits only when the previous session is still closing (the closer gives it back);

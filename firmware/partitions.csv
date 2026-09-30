@@ -1,5 +1,10 @@
 # Name,  Type, SubType, Offset,  Size
-nvs,     data, nvs,     0x9000,  0x6000
-phy_init,data, phy,     0xf000,  0x1000
-factory, app,  factory, 0x10000, 4M
-model,   data, spiffs,  ,        8M
+# Two app slots for over-the-air updates (ota.h): one runs, the other takes the next image.
+nvs,      data, nvs,      0x9000,  0x6000
+otadata,  data, ota,      ,        0x2000
+phy_init, data, phy,      ,        0x1000
+ota_0,    app,  ota_0,    ,        3584K
+ota_1,    app,  ota_1,    ,        3584K
+model,    data, spiffs,   ,        8M
+# The last crash's core dump (crash.h); `make coredump` reads it.
+coredump, data, coredump, ,        256K

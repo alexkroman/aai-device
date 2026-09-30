@@ -12,15 +12,16 @@ from pathlib import Path
 
 # Static internal RAM: 51% after moving big buffers to PSRAM (2026-09-27). Ratchet, never raise.
 DIRAM_BUDGET = 0.58
-APP_BUDGET = 0.60  # app binary vs its partition (was 39%)
+APP_BUDGET = 0.60  # app binary vs one OTA slot (39% of the old 4 MB factory slot)
 
 
 def partition_size(csv: Path, name: str) -> int:
     for line in csv.read_text().splitlines():
         cols = [c.strip() for c in line.split(",")]
         if cols and cols[0] == name:
-            size = cols[4]
-            return int(size[:-1]) * 1024 * 1024 if size.endswith("M") else int(size, 0)
+            size = cols[4].upper()
+            unit = {"K": 1024, "M": 1024 * 1024}.get(size[-1:], 1)
+            return int(size[:-1] if unit > 1 else size, 0) * unit
     raise SystemExit(f"no '{name}' partition in {csv}")
 
 
@@ -28,7 +29,7 @@ def main() -> int:
     layout = {m["name"]: m for m in json.loads(Path(sys.argv[1]).read_text())["layout"]}
     diram = layout["DIRAM"]
     app = Path(sys.argv[2]).stat().st_size
-    part = partition_size(Path(sys.argv[3]), "factory")
+    part = min(partition_size(Path(sys.argv[3]), slot) for slot in ("ota_0", "ota_1"))
     rows = [
         ("internal RAM (static)", diram["used"], diram["total"], DIRAM_BUDGET),
         ("app binary", app, part, APP_BUDGET),

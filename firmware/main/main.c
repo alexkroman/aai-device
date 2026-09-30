@@ -5,16 +5,20 @@
 // Saying the wake word while the agent is talking interrupts it, and "stop" (the agent's
 // stop tool) hangs up without a reply.
 // Reminders the agent pushes to the inbox (inbox.h) play here too, while idle; the wake
-// word stops one.
+// word stops one. Firmware updates (ota.h) install in the background and reboot while idle.
 
 #include "aai_events.h"
 #include "agent.h"
 #include "board.h"
+#include "crash.h"
+#include "discovery.h"
 #include "esp_log.h"
+#include "esp_system.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "inbox.h"
 #include "leds.h"
+#include "ota.h"
 #include "sdkconfig.h"
 #include "voice.h"
 #include "wifi.h"
@@ -37,6 +41,8 @@ static int64_t s_state_since;
 static bool s_thinking;
 // A notice from the inbox is playing; `queued` once all of its audio is in the speaker.
 static bool s_notice, s_notice_queued;
+// New firmware is installed: reboot into it at the first quiet moment.
+static bool s_update_ready;
 
 static int64_t now_ms(void) { return esp_timer_get_time() / 1000; }
 
@@ -50,6 +56,7 @@ static void enter(app_state_t state)
     s_state = state;
     s_state_since = now_ms();
     inbox_set_busy(s_state != STATE_IDLE);
+    ota_set_busy(s_state != STATE_IDLE || s_notice);
 }
 
 static void end_session(void)
@@ -70,6 +77,7 @@ static void show_active(void)
 static void notice_over(void)
 {
     s_notice = false;
+    ota_set_busy(s_state != STATE_IDLE);
     if (s_state == STATE_IDLE) {
         leds_set(LEDS_OFF);
     }
@@ -110,8 +118,14 @@ static void on_tick(void)
     if (s_notice && s_notice_queued && !agent_speaker_busy()) {
         notice_over();
     }
+    if (s_update_ready && s_state == STATE_IDLE && !s_notice && !agent_speaker_busy()) {
+        ESP_LOGI(TAG, "restarting into the new firmware");
+        esp_restart();
+    }
     if (s_state == STATE_CONNECTING && now_ms() - s_state_since > CONNECT_TIMEOUT_MS) {
-        ESP_LOGE(TAG, "could not reach agent at %s", CONFIG_AAI_AGENT_URL);
+        char url[DISCOVERY_URL_MAX];
+        ESP_LOGE(TAG, "could not reach agent at %s", discovery_agent_url(url, sizeof(url)) ? url : "(none found)");
+        discovery_refresh();  // it may have moved
         end_session();
     } else if (s_state == STATE_ACTIVE) {
         show_active();
@@ -189,11 +203,22 @@ static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data)
     case AAI_EVENT_NOTICE:
         s_notice = true;
         s_notice_queued = false;
+        ota_set_busy(true);
         agent_play_chime();  // a cue first, so the reminder doesn't start mid-word to nobody
         leds_set(LEDS_SPEAKING);
         break;
     case AAI_EVENT_NOTICE_QUEUED:
         s_notice_queued = true;
+        break;
+    case AAI_EVENT_AGENT_FOUND: {
+        char url[DISCOVERY_URL_MAX];
+        if (discovery_agent_url(url, sizeof(url))) {
+            inbox_start(url);  // first time: connects; after a move: reconnects there
+        }
+        break;
+    }
+    case AAI_EVENT_UPDATE_READY:
+        s_update_ready = true;  // on_tick() reboots once nothing is playing
         break;
     }
 }
@@ -204,14 +229,20 @@ void app_main(void)
     // until the device can actually hear the wake word.
     leds_init();
     leds_set(LEDS_BOOTING);
+    crash_report();
     ESP_ERROR_CHECK(board_init());
     wifi_start();
     agent_init();
-    voice_init(NULL);  // loads the wake word model while Wi-Fi joins
-    wifi_wait_connected(-1);
-    ESP_ERROR_CHECK(aai_events_register(on_event, NULL));
+    voice_init(NULL);                                      // loads the wake word model while Wi-Fi joins
+    ESP_ERROR_CHECK(aai_events_register(on_event, NULL));  // before discovery: it posts AGENT_FOUND
+    while (!wifi_wait_connected(500)) {
+        // Amber once the model is loaded, while it waits for a phone to send the network.
+        leds_set(wifi_provisioning() ? LEDS_PROVISIONING : LEDS_BOOTING);
+    }
     aai_events_start_tick(TICK_MS);
-    inbox_init();
+    discovery_start();  // its AAI_EVENT_AGENT_FOUND starts the inbox
+    ota_start();
+    ota_mark_healthy();  // Wi-Fi joined and the wake word is listening: this image works
     leds_set(LEDS_OFF);
     ESP_LOGI(TAG, "ready — say the wake word");
 }

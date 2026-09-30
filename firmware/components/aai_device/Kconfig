@@ -3,16 +3,40 @@ menu "AAI Voice Device"
     config AAI_WIFI_SSID
         string "Wi-Fi SSID"
         default ""
+        help
+            Empty (the default for a speaker you hand to someone): the network saved on the
+            device, set from a phone. With none saved, the speaker opens an access point
+            named AAI-xxxxxx and the ring glows amber; the ESP SoftAP Prov app (iOS/Android)
+            joins it and sends the home network. Set, it overrides whatever is saved.
 
     config AAI_WIFI_PASSWORD
         string "Wi-Fi password"
         default ""
 
+    config AAI_PROV_POP
+        string "Wi-Fi setup code (proof of possession)"
+        default "aai-speaker"
+        help
+            Asked for by the provisioning app; it keys the encryption of the Wi-Fi password
+            on its way to the speaker. Empty: no code (anyone in range can set the network).
+
+    config AAI_PROV_FALLBACK_S
+        int "Open Wi-Fi setup when the saved network is unreachable (s)"
+        default 120
+        range 0 3600
+        help
+            A saved network that doesn't connect for this long after boot (it moved house,
+            the password changed) opens the setup access point beside the retries. 0: never.
+            Not used with a compiled-in SSID.
+
     config AAI_AGENT_URL
         string "Agent WebSocket URL"
-        default "ws://192.168.1.10:3000/websocket"
+        default ""
         help
-            The /websocket endpoint of the voice agent, e.g. `aai dev` on your computer.
+            The /websocket endpoint of the voice agent, e.g. ws://192.168.1.10:3000/websocket.
+            Empty: found on the LAN over mDNS, where `make agent` advertises itself
+            (_aai._tcp), and followed when the laptop's address changes. A .local host name
+            (ws://my-mac.local:3000/websocket) also works.
 
     config AAI_DEVICE_ADDRESS
         string "Device street address"
@@ -51,5 +75,19 @@ menu "AAI Voice Device"
         int "Speaker volume (0-100)"
         range 0 100
         default 70
+
+    config AAI_OTA_URL
+        string "Firmware update URL"
+        default ""
+        help
+            Where to fetch firmware updates: an http:// or https:// URL of aai_device.bin,
+            e.g. http://my-mac.local:8070/aai_device.bin for `make ota-serve`. Checked a
+            minute after boot and every AAI_OTA_CHECK_HOURS; an image whose version differs
+            from the running one is downloaded while idle and booted into. Empty: no updates.
+
+    config AAI_OTA_CHECK_HOURS
+        int "Hours between firmware update checks"
+        range 1 168
+        default 6
 
 endmenu

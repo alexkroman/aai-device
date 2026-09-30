@@ -269,13 +269,30 @@ static void ws_handler(void *arg, esp_event_base_t base, int32_t id, void *event
     }
 }
 
-void inbox_init(void)
+void inbox_start(const char *agent_url)
 {
     static char uri[256];
-    if (!proto_inbox_url(CONFIG_AAI_AGENT_URL, inbox_client_id(), uri, sizeof(uri))) {
-        ESP_LOGE(TAG, "no inbox: cannot build its URL from %s", CONFIG_AAI_AGENT_URL);
+    char next[sizeof(uri)];
+    if (!proto_inbox_url(agent_url, inbox_client_id(), next, sizeof(next))) {
+        ESP_LOGE(TAG, "no inbox: cannot build its URL from %s", agent_url);
         return;
     }
+    if (s_ws) {
+        if (strcmp(next, uri) == 0) {
+            return;
+        }
+        // The agent moved (found at a new address): the client keeps reconnecting to the
+        // old one until told. Stop waits for its task, so this is never called from it.
+        ESP_LOGI(TAG, "agent moved; reconnecting");
+        esp_websocket_client_stop(s_ws);
+        strlcpy(uri, next, sizeof(uri));
+        esp_websocket_client_set_uri(s_ws, uri);
+        if (esp_websocket_client_start(s_ws) != ESP_OK) {
+            ESP_LOGE(TAG, "inbox restart failed");
+        }
+        return;
+    }
+    strlcpy(uri, next, sizeof(uri));
     // Stack in PSRAM like agent.c's tasks: it only copies bytes to the speaker's queue.
     xTaskCreatePinnedToCoreWithCaps(player_task, "notice_play", 3072, NULL, 5, &s_player, tskNO_AFFINITY,
                                     MALLOC_CAP_SPIRAM);
