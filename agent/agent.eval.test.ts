@@ -1102,6 +1102,36 @@ describeEval(
       },
     );
 
+    test(
+      "'slack me' a summary puts the Slack DM in the task, needs no yes, and never texts",
+      onSpeaker(async ({ session, mode }) => {
+        const turn = await session.say(
+          "Summarize the boardroom channel in Slack and slack me a summary.",
+        );
+
+        expect(names(turn)).toEqual(["app_task"]);
+        const args = toolArgsIn(turn.toolCalls, "app_task")[0];
+        expect(args?.text).not.toBe(true);
+        expect(String(args?.task)).toMatch(/slack/i);
+        expect(String(args?.task)).toMatch(/\b(me|myself|dm|direct message)\b/i);
+        expect(String(args?.task)).not.toMatch(/\b(text|sms)\b/i);
+        expect(runs.of("appJob")[0]?.input).toMatchObject({ clientId: SPEAKER, text: false });
+        // LIVE ONLY: no promise of a text.
+        if (mode === "live") expect(turn.text).not.toMatch(/\btext\b/i);
+      }),
+      {
+        stubReply: [
+          {
+            tool: "app_task",
+            args: {
+              task: "summarize the latest messages in the Slack boardroom channel and send the summary to me as a Slack DM",
+            },
+          },
+          "On it. I'll let you know when it's done.",
+        ],
+      },
+    );
+
     // ── Deep research ────────────────────────────────────────────────────────
 
     test(
