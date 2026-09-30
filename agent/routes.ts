@@ -1,13 +1,14 @@
 import {
+  type ClientRunsRoutesOptions,
+  clientRunsRoutes,
   type RouteContext,
   type RouteHandler,
   type RouteRequest,
   route,
   routeError,
-  routeResponse,
   webhookRoute,
 } from "@alexkroman1/aai";
-import { isToolFailure, spokenErrorReason } from "@alexkroman1/aai/utils";
+import { isToolFailure } from "@alexkroman1/aai/utils";
 import { z } from "zod";
 import { MIN_APP_SEARCH } from "./app-search.ts";
 import { connectLink, disconnectApp, listApps } from "./apps.ts";
@@ -51,10 +52,32 @@ const text = (max: number) => z.string().max(max).trim().nullish();
 /** Text that must be there. */
 const required = (max: number) => z.string().trim().min(1, "text is required").max(max);
 
-/** Whether an appEvent run said something (its output is `{ told }`). */
-function told(output: unknown): boolean {
-  return (output as { told?: unknown } | undefined)?.told === true;
-}
+/**
+ * The Running panel's choices over the SDK's clientRunsRoutes (the list, the recent
+ * window, the spoken failure reason and the cancel that only reaches this speaker's own
+ * runs are the SDK's).
+ */
+export const RUNNING: ClientRunsRoutesOptions = {
+  recentMs: RECENTLY_FINISHED_MS,
+  // An app event that wasn't one they wanted was judged and dropped: not a task.
+  include: (r) =>
+    !(
+      r.workflow === "appEvent" &&
+      r.status === "completed" &&
+      (r.output as { told?: unknown } | undefined)?.told !== true
+    ),
+  // Research and app jobs narrate their progress; nothing else does.
+  progressFor: (r) => r.workflow === "research" || r.workflow === "appJob",
+  // A call's run completes whether or not the call happened: what the speaker said about
+  // it ("Luigi's didn't answer") is its result.
+  detail: (r) => {
+    const said =
+      r.status === "completed" && r.workflow === "call"
+        ? (r.output as { said?: unknown } | undefined)?.said
+        : undefined;
+    return typeof said === "string" ? said : undefined;
+  },
+};
 
 async function profileView(ctx: RouteContext) {
   const p = await readProfile(ctx);
@@ -209,63 +232,9 @@ export const routes: Record<string, RouteHandler> = {
   }),
 
   // --- Running: this speaker's reminders, research, calls and app jobs -------------------
-  "GET /tasks": route({
-    requireClient: true,
-    handler: async (req, ctx) => {
-      // Every run a tool starts for a speaker is keyed by its client id.
-      const runs = (await ctx.workflows.findByKey(req.clientId, { limit: 100 }))
-        // An app event that wasn't one they wanted was judged and dropped: not a task.
-        .filter((r) => !(r.workflow === "appEvent" && r.status === "completed" && !told(r.output)))
-        .filter(
-          (r) =>
-            r.status === "pending" ||
-            r.status === "running" ||
-            Date.now() - r.createdAt < RECENTLY_FINISHED_MS,
-        );
-
-      const tasks = await Promise.all(
-        runs.map(async (r) => {
-          // Research narrates its progress; a line lost to a restart just isn't shown.
-          const line =
-            (r.workflow === "research" || r.workflow === "appJob") && r.status === "running"
-              ? await ctx.workflows.lastLine(r.runId).catch(() => undefined)
-              : undefined;
-          return {
-            runId: r.runId,
-            workflow: r.workflow,
-            status: r.status === "pending" ? "waiting" : r.status,
-            title: r.label ?? r.workflow,
-            // Why it failed, as the speaker says it: short, and with no credential a
-            // provider's refusal quoted.
-            ...(r.status === "failed"
-              ? { detail: spokenErrorReason(new Error(r.error)) }
-              : r.status === "completed" &&
-                  r.workflow === "call" &&
-                  typeof (r.output as { said?: unknown })?.said === "string"
-                ? // A call's run completes whether or not the call happened: what the
-                  // speaker said about it ("Luigi's didn't answer") is its result.
-                  { detail: (r.output as { said: string }).said }
-                : typeof line === "string"
-                  ? { detail: line }
-                  : {}),
-            updatedAt: r.createdAt,
-          };
-        }),
-      );
-      return { tasks: tasks.sort((a, b) => a.updatedAt - b.updatedAt) };
-    },
-  }),
-  "DELETE /tasks/:runId": route({
-    requireClient: true,
-    handler: async (req, ctx) => {
-      const runId = req.params.runId ?? "";
-      // Only a run of THIS speaker: its key is the speaker's client id.
-      if ((await ctx.workflows.get(runId))?.key !== req.clientId) {
-        return routeResponse(404, { error: "no such task on this speaker" });
-      }
-      return { cancelled: await ctx.workflows.cancel(runId) };
-    },
-  }),
+  // GET /tasks answers { runs } oldest first; DELETE /tasks/:runId cancels one, 404 unless
+  // it is keyed by this ?client= (every run a tool starts for a speaker is).
+  ...clientRunsRoutes(RUNNING),
 
   // --- Apps: the accounts this speaker acts on (apps.ts, Composio) -----------------------
   // Connected ones, or the catalog matching ?search=.

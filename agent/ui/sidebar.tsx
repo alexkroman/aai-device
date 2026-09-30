@@ -1,4 +1,4 @@
-import { phoneE164, useRoute, useStoredValue } from "@alexkroman1/aai-ui";
+import { phoneE164, useClientRuns, useRoute, useStoredValue } from "@alexkroman1/aai-ui";
 import { type ReactNode, useEffect, useState } from "react";
 import { MIN_APP_SEARCH } from "../app-search.ts";
 import { VERBATIM_WINDOW_MS } from "../history-window.ts";
@@ -401,22 +401,14 @@ function Watches() {
 
 // --- Running tasks ----------------------------------------------------------------------
 
-type Task = {
-  runId: string;
-  workflow: string;
-  status: string;
-  title: string;
-  detail?: string;
-  updatedAt: number;
-};
-
+/** GET /tasks (routes.ts, the SDK's clientRunsRoutes), polled, with its cancel. */
 function Tasks() {
-  const { data, error, reload } = useRoute<{ tasks: Task[] }>("/tasks", { pollMs: 5000 });
-  if (!data) return <Failure error={error} />;
-  if (data.tasks.length === 0) return <p className="text-xs opacity-60">Nothing running.</p>;
+  const { runs, error, cancel, cancelling } = useClientRuns("/tasks", { pollMs: 5000 });
+  if (!runs) return <Failure error={error} />;
+  if (runs.length === 0) return <p className="text-xs opacity-60">Nothing running.</p>;
   return (
     <ul className="flex flex-col gap-2">
-      {data.tasks.map((t) => (
+      {runs.map((t) => (
         <li key={t.runId} className="text-sm flex flex-col gap-0.5">
           <div className="flex justify-between gap-2">
             <span className="[overflow-wrap:anywhere]">{t.title}</span>
@@ -437,7 +429,8 @@ function Tasks() {
             <button
               type="button"
               className={`${small} self-start`}
-              onClick={() => api("DELETE", `/tasks/${t.runId}`).finally(reload)}
+              disabled={cancelling === t.runId}
+              onClick={() => void cancel(t.runId)}
             >
               Cancel
             </button>
