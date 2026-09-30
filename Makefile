@@ -234,7 +234,7 @@ format-files:
 	$(if $(call only,%.py),$(RUFF) check --fix-only -q $(call only,%.py) && $(RUFF) format -q $(call only,%.py))
 	$(if $(call only,agent/% caller/%),agent/node_modules/.bin/biome check --write --linter-enabled=false \
 	  --no-errors-on-unmatched --files-ignore-unknown=true $(call only,agent/% caller/%))
-	$(if $(call only,%.sql),$(SQLFLUFF) format -q $(call only,%.sql))
+	$(if $(call only,%.sql),$(SQLFLUFF) format $(call only,%.sql) >/dev/null)
 	$(if $(call only,%.sh .githooks/%),$(SHFMT) --write $(call only,%.sh .githooks/%))
 	$(if $(call only,%CMakeLists.txt),$(GERSEMI) --in-place $(call only,%CMakeLists.txt))
 
