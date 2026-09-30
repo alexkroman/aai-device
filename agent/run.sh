@@ -24,7 +24,7 @@ LISTEN_LOG=.composio-listen.log
 # A name's value in .env, or empty. Never printed.
 dotenv() { sed -n "s/^$1=//p" .env 2>/dev/null | tail -1; }
 
-cleanup() { kill "${listen_pid:-}" 2>/dev/null || true; }
+cleanup() { kill "${listen_pid:-}" "${advertise_pid:-}" 2>/dev/null || true; }
 trap cleanup EXIT INT TERM
 
 start_listener() {
@@ -102,5 +102,21 @@ resolve_project() {
   fi
 }
 
+# Advertise the agent on the LAN (mDNS, _aai._tcp), so a speaker built without
+# CONFIG_AAI_AGENT_URL finds it (firmware discovery.h) and follows this machine's address.
+advertise() {
+  local name="aai agent on $(hostname -s)"
+  if command -v dns-sd >/dev/null; then  # macOS
+    dns-sd -R "$name" _aai._tcp local "$PORT" path=/websocket >/dev/null 2>&1 &
+  elif command -v avahi-publish >/dev/null; then  # Linux
+    avahi-publish -s "$name" _aai._tcp "$PORT" path=/websocket >/dev/null 2>&1 &
+  else
+    echo "discovery: no dns-sd or avahi-publish; speakers need CONFIG_AAI_AGENT_URL" >&2
+    return
+  fi
+  advertise_pid=$!
+}
+
 start_listener
+advertise
 AAI_DEV_HOST=0.0.0.0 node "$SDK/packages/aai-cli/bin.mjs" dev -p "$PORT"

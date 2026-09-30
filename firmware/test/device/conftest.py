@@ -124,4 +124,4 @@ def device(request) -> UnityDevice:
 @pytest.fixture(scope="session")
 def agent_url() -> str:
     cfg = json.loads((HERE / "build/config/sdkconfig.json").read_text())
-    return cfg["AAI_AGENT_URL"]
+    return cfg["AAI_AGENT_URL"]  # empty: the firmware finds it over mDNS, but the test app doesn't

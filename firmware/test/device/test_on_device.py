@@ -31,6 +31,8 @@ def test_playback(device):
 
 
 def test_agent(device, agent_url):
+    if not agent_url:
+        pytest.skip("set CONFIG_AAI_AGENT_URL in sdkconfig.defaults.local: the test app has no discovery")
     health = f"http://{urlparse(agent_url).netloc}/health"
     try:
         urllib.request.urlopen(health, timeout=3)
