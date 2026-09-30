@@ -3,7 +3,7 @@ import "@alexkroman1/aai-ui/styles.css";
 import { mountClient } from "@alexkroman1/aai-ui";
 import { App } from "./ui/app.tsx";
 import { clientId } from "./ui/client-id.ts";
-import { readSetting } from "./ui/settings.ts";
+import { phoneE164, readSetting } from "./ui/settings.ts";
 
 // The browser twin of the speaker (ui/): what `aai dev` serves on :3000. The device
 // itself talks to the same /websocket; this page only adds what a speaker can't do,
@@ -26,7 +26,7 @@ mountClient({
   name: "Home Speaker",
   // Where text_me and deep research text a browser session, read on every connect. No
   // ?location=: the household profile's address is the one everything uses (context.ts).
-  phone: () => readSetting("phone") || undefined,
+  phone: () => phoneE164(readSetting("phone")),
   // The device's ?client=: what lets a reminder or a finished research job find this page
   // again after the session ends (useInbox holds the socket it arrives on).
   client: clientId,
