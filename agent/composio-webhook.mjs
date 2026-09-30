@@ -17,6 +17,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { parseEnv } from "node:util";
+import { jsonClient } from "@alexkroman1/aai/utils";
 
 const API = "https://backend.composio.dev/api/v3.1";
 const agentDir = fileURLToPath(new URL(".", import.meta.url));
@@ -40,16 +41,14 @@ if (!key) {
   process.exit(1);
 }
 
-async function composio(method, path, body) {
-  const res = await fetch(`${API}${path}`, {
-    method,
-    headers: { "x-api-key": key, "content-type": "application/json" },
-    ...(body ? { body: JSON.stringify(body) } : {}),
-  });
-  const json = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(`Composio ${res.status}: ${json.error?.message ?? res.statusText}`);
-  return json;
-}
+// The SDK's JSON client, as apps.ts's `call` uses it (a .mjs cannot import that .ts): the
+// key, JSON in and out, and a refusal thrown as "Composio <status>: <its message>".
+const composioApi = jsonClient({
+  label: "Composio",
+  baseUrl: API,
+  headers: { "x-api-key": key },
+});
+const composio = (method, path, body) => composioApi({ env: {} }, method, path, body);
 
 const want = {
   webhook_url: webhookUrl,
