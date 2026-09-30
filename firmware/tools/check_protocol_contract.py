@@ -78,16 +78,18 @@ def main() -> int:
         "command": lambda n: re.search(rf'(cmd|z\.literal)\("{re.escape(n)}"', commands),
         "command_field": lambda n: re.search(rf"\b{re.escape(n)}\??:", commands),
         "url_param": lambda n: re.search(rf'"{re.escape(n)}"', upgrade),
-        "inbox_path": lambda n: re.search(rf'CLIENT_INBOX_PATH = "{re.escape(n)}"', inbox)
-        and re.search(r'get\("client"\)', inbox),
+        "inbox_path": lambda n: (
+            re.search(rf'CLIENT_INBOX_PATH = "{re.escape(n)}"', inbox)
+            and re.search(r'get\("client"\)', inbox)
+        ),
         "notice_field": lambda n: (
             re.search(rf'"{re.escape(n)}"', notify) or re.search(rf"\b{re.escape(n)}:", inbox)
         ),
         # a field the agent's workflows put in `data`, or one stepSayOnClient adds itself
-        "notice_data_field": lambda n: re.search(
-            rf"step(NotifyClient|SayOnClient)\([^;]*data: \{{[^}}]*\b{re.escape(n)}\b", workflows
-        )
-        or re.search(rf"data: \{{ \.\.\.options\.data, {re.escape(n)}: text \}}", say),
+        "notice_data_field": lambda n: (
+            re.search(rf"step(NotifyClient|SayOnClient)\([^;]*data: \{{[^}}]*\b{re.escape(n)}\b", workflows)
+            or re.search(rf"data: \{{ \.\.\.options\.data, {re.escape(n)}: text \}}", say)
+        ),
         "notice_reply": lambda n: re.search(rf'msg\.type === "{re.escape(n)}"', inbox),
         "custom_event": lambda n: re.search(rf'ctx\.send\(\s*"{re.escape(n)}"', tools),
     }

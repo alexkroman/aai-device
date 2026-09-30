@@ -47,5 +47,5 @@ $$;
 
 revoke execute on function public.fold_older_history from public, anon, authenticated;
 grant select, insert, update, delete on public.conversation_digests, public.older_history
-  to service_role;
+to service_role;
 grant execute on function public.fold_older_history to service_role;

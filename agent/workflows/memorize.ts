@@ -30,7 +30,7 @@ export const MAX_DIGESTS = 12;
 export const KEEP_DIGESTS = 6;
 /** A mem0 extraction usually lands in seconds; past this the step stops watching. */
 const MEM0_WAIT_MS = 60_000;
-const MEM0_POLL_MS = 3_000;
+const MEM0_POLL_MS = 3000;
 
 const DigestReply = z.object({ digest: z.string() });
 const FoldReply = z.object({ summary: z.string() });
@@ -150,7 +150,7 @@ async function foldOldDigests(clientId: string): Promise<number> {
     body: {
       p_client_id: clientId,
       p_summary: summary.trim().slice(0, 6000),
-      p_through: old[old.length - 1]?.started_at,
+      p_through: old.at(-1)?.started_at,
     },
   });
   return old.length;

@@ -1,0 +1,5 @@
+# CMake formatting (make format / lint-cmake). The firmware's CMakeLists use 4 spaces.
+line_length: 110
+indent: 4
+list_expansion: favour-inlining
+warn_about_unknown_commands: false

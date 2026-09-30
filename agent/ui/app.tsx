@@ -4,7 +4,7 @@ import {
   SessionErrorBanner,
   ToolCallRow,
 } from "@alexkroman1/aai-ui";
-import { type FormEvent, useState } from "react";
+import { type SubmitEvent, useState } from "react";
 import { linked } from "./client-id.ts";
 import { Ring } from "./ring.tsx";
 import { Sidebar } from "./sidebar.tsx";
@@ -170,7 +170,7 @@ function Bubble({
 
 function Composer({ onSend }: { onSend: (text: string) => void }) {
   const [text, setText] = useState("");
-  const submit = (e: FormEvent) => {
+  const submit = (e: SubmitEvent) => {
     e.preventDefault();
     onSend(text);
     setText("");

@@ -186,7 +186,11 @@ size_t pcm_align(pcm_aligner_t *a, const uint8_t *data, size_t len, int16_t *out
         a->has_carry = false;
     }
     size_t pairs = len / 2;
-    memcpy(&out[n], data, pairs * 2);
+    // An empty frame may come with data == NULL, and memcpy's pointers must be valid even
+    // for 0 bytes (glibc's UBSan build says so).
+    if (pairs > 0) {
+        memcpy(&out[n], data, pairs * 2);
+    }
     n += pairs;
     if (len & 1) {
         a->carry = data[len - 1];

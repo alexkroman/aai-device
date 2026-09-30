@@ -36,7 +36,7 @@ export const call = jsonClient({
   // request id is what its dashboard and support look a failure up by.
   errorMessage: (body) => {
     const err = isRecord(body) && isRecord(body.error) ? body.error : undefined;
-    if (typeof err?.message !== "string") return undefined;
+    if (typeof err?.message !== "string") return;
     const errors = Array.isArray(err.errors) ? err.errors : [];
     const detail = errors.length ? `: ${errors.join("; ")}` : "";
     const request = typeof err.request_id === "string" ? ` (request ${err.request_id})` : "";

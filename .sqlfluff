@@ -1,0 +1,11 @@
+# SQL lint + format for supabase/ (make lint-sql / make format). Postgres, as Supabase runs it.
+[sqlfluff]
+dialect = postgres
+max_line_length = 110
+
+[sqlfluff:indentation]
+indent_unit = space
+tab_space_size = 2
+
+[sqlfluff:rules:capitalisation.keywords]
+capitalisation_policy = lower

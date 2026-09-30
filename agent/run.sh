@@ -104,10 +104,11 @@ resolve_project() {
 # Advertise the agent on the LAN (mDNS, _aai._tcp), so a speaker built without
 # CONFIG_AAI_AGENT_URL finds it (firmware discovery.h) and follows this machine's address.
 advertise() {
-  local name="aai agent on $(hostname -s)"
-  if command -v dns-sd >/dev/null; then  # macOS
+  local name
+  name="aai agent on $(hostname -s)"
+  if command -v dns-sd >/dev/null; then # macOS
     dns-sd -R "$name" _aai._tcp local "$PORT" path=/websocket >/dev/null 2>&1 &
-  elif command -v avahi-publish >/dev/null; then  # Linux
+  elif command -v avahi-publish >/dev/null; then # Linux
     avahi-publish -s "$name" _aai._tcp "$PORT" path=/websocket >/dev/null 2>&1 &
   else
     echo "discovery: no dns-sd or avahi-publish; speakers need CONFIG_AAI_AGENT_URL" >&2

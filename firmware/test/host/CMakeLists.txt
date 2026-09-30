@@ -22,7 +22,14 @@ if(COVERAGE)
     add_compile_options(-fprofile-instr-generate -fcoverage-mapping)
     add_link_options(-fprofile-instr-generate)
 endif()
-add_compile_options(-Wall -Wextra -Werror -Wshadow -Wformat=2 -g)
+add_compile_options(
+    -Wall
+    -Wextra
+    -Werror
+    -Wshadow
+    -Wformat=2
+    -g
+)
 if(SANITIZE)
     add_compile_options(-fsanitize=address,undefined -fno-sanitize-recover=all)
     add_link_options(-fsanitize=address,undefined)
@@ -42,16 +49,24 @@ foreach(name resample protocol)
     target_include_directories(test_${name} PRIVATE ${FW}/components/aai_device/include)
     target_link_libraries(test_${name} unity cjson m)
     add_test(NAME ${name} COMMAND test_${name})
-    set_tests_properties(${name} PROPERTIES ENVIRONMENT
-        "ASAN_OPTIONS=detect_leaks=1:strict_string_checks=1:detect_stack_use_after_return=1;UBSAN_OPTIONS=print_stacktrace=1")
+    set_tests_properties(
+        ${name}
+        PROPERTIES
+            ENVIRONMENT
+                "ASAN_OPTIONS=detect_leaks=1:strict_string_checks=1:detect_stack_use_after_return=1;UBSAN_OPTIONS=print_stacktrace=1"
+    )
 endforeach()
 
 # libFuzzer targets (needs upstream clang):  cmake -DFUZZ=ON ...
 option(FUZZ "Build libFuzzer harnesses instead of unit tests" OFF)
 if(FUZZ)
     foreach(target protocol pcm audio)
-        add_executable(fuzz_${target} ${CMAKE_CURRENT_LIST_DIR}/../fuzz/fuzz_${target}.c
-                       ${FW}/components/aai_device/protocol.c ${FW}/components/aai_device/resample.c)
+        add_executable(
+            fuzz_${target}
+            ${CMAKE_CURRENT_LIST_DIR}/../fuzz/fuzz_${target}.c
+            ${FW}/components/aai_device/protocol.c
+            ${FW}/components/aai_device/resample.c
+        )
         target_include_directories(fuzz_${target} PRIVATE ${FW}/components/aai_device/include)
         target_compile_options(fuzz_${target} PRIVATE -fsanitize=fuzzer)
         target_link_options(fuzz_${target} PRIVATE -fsanitize=fuzzer)

@@ -74,7 +74,7 @@ export default tool({
         return { saved: "phone", note: "That is already the number on file." };
       case "rate_limited":
         return toolFailure("I've texted too many codes today. Ask them to try again tomorrow.");
-      case "sent":
+      default: // sent
         return {
           verification: "code_texted",
           to: spokenPhone(started.phone),

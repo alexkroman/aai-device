@@ -47,7 +47,8 @@ export default tool({
     if (isToolFailure(at)) return at;
 
     const url =
-      `https://pollen.googleapis.com/v1/forecast:lookup?days=1&plantsDescription=false` +
+      // biome-ignore lint/security/noSecrets: a URL, not a secret (the key goes in a header)
+      "https://pollen.googleapis.com/v1/forecast:lookup?days=1&plantsDescription=false" +
       `&location.latitude=${at.latitude}&location.longitude=${at.longitude}`;
     const res = await fetchJson(url, { headers: { "x-goog-api-key": at.key }, signal: ctx.signal });
     if (isToolFailure(res)) return toolFailure(`Pollen lookup failed: ${res.error}`);

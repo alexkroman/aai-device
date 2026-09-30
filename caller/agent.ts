@@ -26,7 +26,7 @@ export default agent({
   requiredEnv: ["SUPABASE_URL", "SUPABASE_SECRET_KEY"],
   async sessionContext({ sessionId, call, env, signal }) {
     const callId = call?.parameters.call;
-    if (!call || !callId) return { refuse: "not a placed call" };
+    if (!(call && callId)) return { refuse: "not a placed call" };
     try {
       const task = await claimCall({ env, signal }, callId, sessionId);
       if (!task) return { refuse: "no approved call with that id" };

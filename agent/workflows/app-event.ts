@@ -35,7 +35,7 @@ export const JUDGE_SYSTEM =
 
 export async function appEventFlow(input: AppEventInput, ctx: WorkflowContext) {
   const verdict = await ctx.step("judge", () => judge(input));
-  if (!verdict.tell || !verdict.say) return { told: false };
+  if (!(verdict.tell && verdict.say)) return { told: false };
   const { runId } = ctx;
   await ctx.step("tell", () => tell(runId, input, verdict.say), {
     maxAttempts: DEFAULT_CLIENT_DELIVERY_ATTEMPTS,

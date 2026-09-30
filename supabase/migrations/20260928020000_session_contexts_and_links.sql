@@ -29,4 +29,4 @@ alter table public.link_codes enable row level security;
 create index link_codes_pending on public.link_codes (expires_at) where speaker_client is null;
 
 grant select, insert, update, delete on public.session_contexts, public.link_codes
-  to service_role;
+to service_role;

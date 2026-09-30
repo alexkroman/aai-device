@@ -12,7 +12,8 @@
     "test:agent": "aai test --only",
     "eval": "aai eval",
     "publish:agent": "aai publish",
-    "typecheck": "tsc --noEmit"
+    "lint": "biome check . && tsc --noEmit",
+    "lint:fix": "biome check --write ."
   },
   "dependencies": {
     "@alexkroman1/aai": "link:../../aai/agent-builtin-api-tools/packages/aai",
@@ -22,6 +23,7 @@
     "zod": "^4.5.4"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.5.12",
     "@types/node": "^24.10.1",
     "typescript": "^7.0.2",
     "vite": "^8.2.2",
