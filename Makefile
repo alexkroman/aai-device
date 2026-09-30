@@ -32,7 +32,7 @@ DEVICE_STAMP := $(FW)/test/device/.last-pass
 # The local SDK checkout agent/package.json links against. Keep the two in step.
 AAI_SDK   ?= $(HOME)/Code/aai/agent-builtin-api-tools
 
-.PHONY: composio-webhook check require-idf lint lint-format lint-tidy lint-cppcheck lint-python lint-agent \
+.PHONY: composio-webhook check require-idf lint lint-format lint-tidy lint-cppcheck lint-python lint-agent lint-caller \
         build-firmware test-host test-fuzz test-coverage check-contract check-size test-agent \
         device-freshness test-device test-e2e format agent caller supabase flash monitor
 
@@ -46,7 +46,7 @@ require-idf:
 
 # ---- lint -------------------------------------------------------------------
 
-lint: lint-format lint-tidy lint-cppcheck lint-python lint-agent
+lint: lint-format lint-tidy lint-cppcheck lint-python lint-agent lint-caller
 
 lint-format:
 	$(LLVM)/clang-format --dry-run --Werror $(C_SOURCES)
@@ -68,8 +68,13 @@ lint-python:
 	ruff check $(FW)
 	ruff format --check $(FW)
 
+# Biome, then tsc over every .ts in agent/ (its tsconfig has no include: all of it).
 lint-agent:
 	cd agent && pnpm run lint
+
+# The calling agent's .ts, typechecked the same way (it has no Biome config of its own).
+lint-caller:
+	cd caller && pnpm run typecheck
 
 # ---- firmware ---------------------------------------------------------------
 

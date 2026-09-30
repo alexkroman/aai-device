@@ -11,7 +11,8 @@
     "test": "aai test",
     "test:agent": "aai test --only",
     "eval": "aai eval",
-    "publish:agent": "aai publish"
+    "publish:agent": "aai publish",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@alexkroman1/aai": "link:../../aai/agent-builtin-api-tools/packages/aai",
