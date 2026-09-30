@@ -60,7 +60,7 @@ export default agent({
   // round trips too slow for a turn: appJob does every app task and says the answer,
   // appEvent judges and says an event from a watched app, emailResult sends email_me.
   workflows: { remind, research, memorize, call, appEvent, appJob, emailResult },
-  // What the speaker plays pushed notices at (stepSayOnClient): the board's own rate, so
+  // What the speaker plays pushed notices at (ctx.sayOnClient): the board's own rate, so
   // the firmware needs no resampler.
   clientInbox: { sampleRate: 16_000 },
   // Every connect of a speaker (its ?client= id) is ONE long conversation: the SDK

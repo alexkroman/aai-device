@@ -1,27 +1,20 @@
-import type {
-  StepOptions,
-  SubagentDef,
-  ToolDef,
-  WorkflowContext,
-  WorkflowFailureHandler,
-} from "@alexkroman1/aai";
+import type { StepOptions, SubagentDef, ToolDef, WorkflowContext } from "@alexkroman1/aai";
 import { mcpToolName, subagent, tool, toolFailure } from "@alexkroman1/aai";
 import { TEXTBELT_MAX_MESSAGE_CHARS } from "@alexkroman1/aai/channels";
 import { stepMcp } from "@alexkroman1/aai/experimental";
 import {
-  DEFAULT_CLIENT_DELIVERY_ATTEMPTS,
   requireStepEnv,
+  sayFailureOnClient,
   stepDelegate,
   stepEnvContext,
   stepReport,
-  stepSayOnClient,
 } from "@alexkroman1/aai/step";
 import { stepGenerateOrFail } from "@alexkroman1/aai/step-errors";
-import { HttpError, spokenErrorReason } from "@alexkroman1/aai/utils";
+import { HttpError } from "@alexkroman1/aai/utils";
 import { z } from "zod";
 import { CONNECT_HINT, composioMcp } from "../apps.ts";
 import { findTriggers, unwatch, WatchLimit, watch, watches } from "../watches.ts";
-import { TEXT_STEP, type Texted, textReport } from "./text.ts";
+import { TEXT_STEP, type Texted, textOwner } from "./text.ts";
 
 // EVERYTHING the speaker does on the household's apps, from "what's on my calendar" to
 // "summarize my last 50 emails" to "tell me when Sam emails": a Composio action is round
@@ -88,7 +81,6 @@ export const WORKER_SYSTEM =
   "instructions.";
 
 export async function appJobFlow(input: AppJobInput, ctx: WorkflowContext) {
-  const { runId } = ctx;
   const answer = await ctx.step("work", () => work(input), WORK_STEP);
   // Its own step name, not the texted version's `writeUp`: a run journaled before the
   // change must not replay that step's old shape into this one.
@@ -96,19 +88,25 @@ export async function appJobFlow(input: AppJobInput, ctx: WorkflowContext) {
   let texted: Texted = { sent: false };
   if (input.text) {
     const message = await ctx.step("writeText", () => writeText(input.task, answer));
-    texted = await ctx.step("text", () => textReport(input, message), TEXT_STEP);
+    texted = await ctx.step("text", () => textOwner(input.phone, message), TEXT_STEP);
   }
-  await ctx.step("announce", () => announce(runId, input, said, texted), {
-    maxAttempts: DEFAULT_CLIENT_DELIVERY_ATTEMPTS,
+  // Speak and push in ONE step, as reminders do: the run id makes a redelivery a repeat.
+  await ctx.sayOnClient("announce", input.clientId, {
+    event: "app",
+    text: spokenAnswer(input, said, texted),
   });
   return { task: input.task, said, texted };
 }
 
-/** A run that failed for good says so on the speaker (shared.ts `onFailure`). */
-export const appJobFailure: WorkflowFailureHandler<AppJobInput> = {
-  run: (err, { runId, input }) => announceFailure(runId, input, spokenErrorReason(err)),
-  maxAttempts: DEFAULT_CLIENT_DELIVERY_ATTEMPTS,
-};
+/**
+ * A run that failed for good says so on the speaker (shared.ts `onFailure`): id
+ * `${runId}:failed`, data.failed, DEFAULT_CLIENT_DELIVERY_ATTEMPTS, all the SDK's.
+ */
+export const appJobFailure = sayFailureOnClient<AppJobInput>({
+  clientId: (input) => input.clientId,
+  event: "app",
+  text: (_err, _input, why) => `Sorry, I couldn't finish that: ${why}`,
+});
 
 /** The worker, built per run because its tools act as this run's speaker. */
 export function worker(
@@ -221,13 +219,12 @@ export async function writeText(task: string, answer: string): Promise<string> {
   return text.trim().slice(0, TEXTBELT_MAX_MESSAGE_CHARS);
 }
 
-/** Speak and push in ONE step, as reminders do: the run id makes a redelivery a repeat. */
-export async function announce(
-  id: string,
+/** What the speaker says: the answer, and whether the text they asked for went. */
+export function spokenAnswer(
   input: AppJobInput,
   answer: string,
   texted: Texted = { sent: false },
-): Promise<void> {
+): string {
   const delivery = texted.sent
     ? " I've texted it to you too."
     : texted.why
@@ -235,18 +232,5 @@ export async function announce(
       : input.text
         ? " I couldn't text it to you: texting isn't set up."
         : "";
-  await stepSayOnClient(input.clientId, {
-    id,
-    event: "app",
-    text: `${answer}${delivery}`,
-  });
-}
-
-export async function announceFailure(id: string, input: AppJobInput, why: string): Promise<void> {
-  await stepSayOnClient(input.clientId, {
-    id: `${id}:failed`,
-    event: "app",
-    text: `Sorry, I couldn't finish that: ${why}`,
-    data: { failed: true },
-  });
+  return `${answer}${delivery}`;
 }

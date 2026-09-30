@@ -10,9 +10,9 @@ import {
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { research } from "./shared.ts";
 import deepResearch from "./tools/deep_research.ts";
-import { announce, researchWorkflow, withSources } from "./workflows/research.ts";
+import { readyText, researchWorkflow, withSources } from "./workflows/research.ts";
 import { BRIEF_SYSTEM } from "./workflows/research-prompts.ts";
-import { TEXT_STEP, textReport } from "./workflows/text.ts";
+import { TEXT_STEP, textOwner } from "./workflows/text.ts";
 
 // The research stages themselves (brief, angles, researchers, gaps, report) are the SDK's
 // deepResearchWorkflow and tested there; this pins the speaker's side of it: its prompts,
@@ -129,20 +129,52 @@ describe("the research workflow", () => {
     ]);
   });
 
-  test("a failure is said on the speaker, then still fails the run", async () => {
+  /** The engine's failure hook: sayFailureOnClient's `{ run, maxAttempts }`. */
+  function failureHook() {
+    const hook = researchWorkflow.onFailure;
+    if (typeof hook !== "object") throw new Error("onFailure is not the engine's handler");
+    return hook;
+  }
+
+  test("a failure fails the run, and the ENGINE's hook says it on the speaker", async () => {
     // No angles planned: the fan-out has nothing to map, and the pass throws.
     const ctx = createWorkflowContext({ runSteps: false, results: { writeBrief: brief } });
     await expect(researchWorkflow.run(input, ctx)).rejects.toThrow();
-    expect(ctx.steps.at(-1)).toEqual({
-      name: "announceFailure",
-      maxAttempts: DEFAULT_CLIENT_DELIVERY_ATTEMPTS,
+    expect(ctx.steps.map((s) => s.name)).not.toContain("announce");
+
+    installStubSpeech();
+    const inbox = installStubClientInbox();
+    const hook = failureHook();
+    expect(hook.maxAttempts).toBe(DEFAULT_CLIENT_DELIVERY_ATTEMPTS);
+    await hook.run(new Error("The search service is down."), {
+      runId: "wrun_4",
+      workflow: "research",
+      input,
     });
+    expect(inbox.calls).toMatchObject([
+      {
+        clientId: "kitchen",
+        notice: {
+          id: "wrun_4:failed",
+          event: "research",
+          data: {
+            topic: "heat pumps",
+            failed: true,
+            said: "Sorry, the research on heat pumps didn't finish. The search service is down.",
+          },
+        },
+      },
+    ]);
   });
 
   test("with no speaker to say it on, a failure says nothing", async () => {
-    const ctx = createWorkflowContext({ runSteps: false, results: { writeBrief: brief } });
-    await expect(researchWorkflow.run({ topic: "heat pumps" }, ctx)).rejects.toThrow();
-    expect(ctx.steps.map((s) => s.name)).not.toContain("announceFailure");
+    const inbox = installStubClientInbox();
+    await failureHook().run(new Error("down"), {
+      runId: "wrun_5",
+      workflow: "research",
+      input: { topic: "heat pumps" },
+    });
+    expect(inbox.calls).toEqual([]);
   });
 
   test("the brief is written with the speaker's prompt", async () => {
@@ -159,7 +191,7 @@ describe("the research workflow", () => {
   });
 });
 
-describe("textReport", () => {
+describe("textOwner", () => {
   afterEach(() => vi.unstubAllEnvs());
 
   function textbelt() {
@@ -172,7 +204,7 @@ describe("textReport", () => {
 
   test("texts an allowlisted number the client reported", async () => {
     const sent = textbelt();
-    expect(await textReport({ phone: "+15555550111" }, "The report.")).toEqual({
+    expect(await textOwner("+15555550111", "The report.")).toEqual({
       sent: true,
     });
     expect(sent()).toMatchObject({
@@ -184,7 +216,7 @@ describe("textReport", () => {
 
   test("a number the client made up is ignored: the owner gets it", async () => {
     const sent = textbelt();
-    await textReport({ phone: "+15555550999" }, "The report.");
+    await textOwner("+15555550999", "The report.");
     expect(sent().phone).toBe("+15555550100");
   });
 
@@ -192,17 +224,26 @@ describe("textReport", () => {
     vi.stubEnv("TEXTBELT_KEY", "k");
     vi.stubEnv("SMS_TO_PHONE", "");
     const fetched = installStubStepFetch(() => ({ body: { success: true } }));
-    expect(await textReport({}, "r")).toEqual({ sent: false });
+    expect(await textOwner(undefined, "r")).toEqual({ sent: false });
     expect(fetched.calls).toEqual([]);
   });
 
   test("links are taken out before Textbelt sees the report", async () => {
     const sent = textbelt();
-    await textReport(
-      { phone: "+15555550111" },
+    await textOwner(
+      "+15555550111",
       "It works [1].\n\nSources:\n[1] https://example.com/heat-pumps",
     );
     expect(sent().message).toBe("It works [1].");
+  });
+
+  test("a recipient with no TEXTBELT_KEY fails the step for good, naming the key", async () => {
+    vi.stubEnv("TEXTBELT_KEY", "");
+    vi.stubEnv("SMS_TO_PHONE", "+15555550100");
+    await expect(textOwner(undefined, "The report.")).rejects.toMatchObject({
+      name: "FatalError",
+      message: expect.stringContaining("TEXTBELT_KEY"),
+    });
   });
 
   test("a refusal is an answer, not a failed run, and never quotes the key", async () => {
@@ -215,7 +256,7 @@ describe("textReport", () => {
           "Sorry, ability to send URLs via text is limited to verified accounts. Please go to https://textbelt.com/whitelist?key=test-key-123456 or email support.",
       },
     }));
-    const texted = await textReport({}, "The report.");
+    const texted = await textOwner(undefined, "The report.");
     expect(texted).toMatchObject({
       sent: false,
       why: expect.stringContaining("verified accounts"),
@@ -224,13 +265,12 @@ describe("textReport", () => {
   });
 });
 
-describe("announce", () => {
-  test("says the summary on the speaker under the run id, and whether it was texted", async () => {
+describe("the announcement", () => {
+  test("says the summary on the speaker under the run id", async () => {
     installStubSpeech({ pcmBytes: 3200 });
     const inbox = installStubClientInbox();
-    await announce("wrun_9", { topic: "heat pumps", clientId: "kitchen" }, "They work.", {
-      sent: true,
-    });
+    const ctx = createWorkflowContext({ runId: "wrun_9", results: stages });
+    await researchWorkflow.run({ topic: "heat pumps", clientId: "kitchen" }, ctx);
     expect(inbox.calls).toMatchObject([
       {
         clientId: "kitchen",
@@ -239,10 +279,19 @@ describe("announce", () => {
           event: "research",
           data: {
             topic: "heat pumps",
-            said: "Your research on heat pumps is ready. They work. I've texted you the full report.",
+            said: "Your research on heat pumps is ready. Rebates make them affordable.",
           },
         },
       },
     ]);
+  });
+
+  test("and whether the report was texted", () => {
+    expect(readyText("heat pumps", "They work.", { sent: true })).toBe(
+      "Your research on heat pumps is ready. They work. I've texted you the full report.",
+    );
+    expect(readyText("heat pumps", "They work.", { sent: false, why: "no credit" })).toBe(
+      "Your research on heat pumps is ready. They work. I couldn't text you the full report: no credit",
+    );
   });
 });

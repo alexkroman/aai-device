@@ -1,4 +1,11 @@
-import { phoneE164, useRoute, useStoredValue } from "@alexkroman1/aai-ui";
+import {
+  errorMessage,
+  phoneE164,
+  useClientRuns,
+  useRoute,
+  useRouteMutation,
+  useStoredValue,
+} from "@alexkroman1/aai-ui";
 import { type ReactNode, useEffect, useState } from "react";
 import { MIN_APP_SEARCH } from "../app-search.ts";
 import { VERBATIM_WINDOW_MS } from "../history-window.ts";
@@ -10,6 +17,11 @@ import { PHONE_COUNTRY, phone } from "./settings.ts";
 // runs going on for it, what it remembers, and the context each session started with,
 // all read and edited through the agent's /api routes (routes.ts). Plus the link that
 // makes this page a speaker's twin.
+//
+// Reads are useRoute, writes useRouteMutation: each write's busy key (the field, the row)
+// disables only what was pressed, its failure is the route's own { error } sentence, and
+// the list it changed is re-read when it settles. Both send the session's client, the
+// same linked.id() api() does.
 
 const input =
   "w-full px-3 py-2 rounded-lg bg-aai-surface border border-aai-border text-sm outline-none focus:border-aai-primary";
@@ -69,18 +81,10 @@ type ProfileData = { name: string; home_address: string; phone_last4: string; em
 
 function Profile() {
   const { data, error, reload } = useRoute<ProfileData>("/profile");
-  const [saving, setSaving] = useState<string>();
-  const [failed, setFailed] = useState<string>();
+  const { run, busy: saving, error: failed } = useRouteMutation({ onSettled: reload });
   const save = (field: "name" | "home_address" | "email", value: string) => {
     if (!data || value.trim() === data[field]) return;
-    setSaving(field);
-    api("PUT", "/profile", { [field]: value })
-      .then(() => setFailed(undefined))
-      .catch((e: unknown) => setFailed(e instanceof Error ? e.message : String(e)))
-      .finally(() => {
-        setSaving(undefined);
-        reload();
-      });
+    void run("PUT", "/profile", { [field]: value }, { key: field });
   };
   if (!data) return <Failure error={error ?? (data ? undefined : "")} />;
   return (
@@ -181,23 +185,24 @@ function Link({ endSession }: { endSession: () => void }) {
   const [code, setCode] = useState<{ code: string; expiresAt: number }>();
   const [error, setError] = useState<string>();
 
-  // While a code is out, ask whether a speaker has claimed it.
+  // While a code is out, ask whether a speaker has claimed it: /link reads THIS browser's
+  // own pending code, so it goes as linked.own(), not the (still unset) linked speaker. A
+  // failed poll is only a missed tick; useRoute keeps asking.
+  const claim = useRoute<{ speakerClient: string | null }>(code ? "/link" : null, {
+    pollMs: 2000,
+    client: linked.own(),
+  });
+  const claimedBy = code ? claim.data?.speakerClient : undefined;
+  useEffect(() => {
+    if (claimedBy) switchTo(claimedBy, endSession);
+  }, [claimedBy, endSession]);
+  // An unclaimed code dies server-side at expiresAt; drop it here then too, which also
+  // stops the poll (path null) and brings back the button for a new one.
   useEffect(() => {
     if (!code) return;
-    const id = setInterval(() => {
-      if (Date.now() > code.expiresAt) {
-        setCode(undefined);
-        return;
-      }
-      api<{ speakerClient: string | null }>("GET", "/link", undefined, { as: "browser" })
-        .then(({ speakerClient }) => {
-          if (!speakerClient) return;
-          switchTo(speakerClient, endSession);
-        })
-        .catch(() => {});
-    }, 2000);
-    return () => clearInterval(id);
-  }, [code, endSession]);
+    const id = setTimeout(() => setCode(undefined), Math.max(0, code.expiresAt - Date.now()));
+    return () => clearTimeout(id);
+  }, [code]);
 
   if (speaker) {
     return (
@@ -234,7 +239,7 @@ function Link({ endSession }: { endSession: () => void }) {
         onClick={() =>
           api<{ code: string; expiresAt: number }>("POST", "/link", undefined, { as: "browser" })
             .then(setCode)
-            .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+            .catch((e: unknown) => setError(errorMessage(e)))
         }
       >
         Get a code (this browser: {linked.own()})
@@ -256,53 +261,39 @@ type AppRow = { slug: string; name: string; logo: string; description: string; c
 function Apps() {
   const connected = useRoute<{ apps: AppRow[] }>("/apps", { pollMs: 5000 });
   const [search, setSearch] = useState("");
-  const [found, setFound] = useState<AppRow[]>();
-  const [busy, setBusy] = useState<string>();
-  const [failed, setFailed] = useState<string>();
-  const fail = (e: unknown) => setFailed(e instanceof Error ? e.message : String(e));
+  const [query, setQuery] = useState("");
+  const { run, busy, error: failed } = useRouteMutation({ onSettled: connected.reload });
 
+  // Search once typing pauses: `query` trails `search` by 300 ms, and a new keystroke
+  // restarts the wait. Composio searches from MIN_APP_SEARCH letters; fewer reads nothing
+  // (path null) and shows the hint below.
   useEffect(() => {
-    const q = search.trim();
-    // Composio searches from MIN_APP_SEARCH letters; fewer shows the hint below.
-    if (q.length < MIN_APP_SEARCH) {
-      setFound(undefined);
-      return;
-    }
-    const id = setTimeout(() => {
-      api<{ apps: AppRow[] }>("GET", `/apps?search=${encodeURIComponent(q)}`)
-        .then(({ apps }) => setFound(apps))
-        .catch((e: unknown) => setFailed(e instanceof Error ? e.message : String(e)));
-    }, 300);
+    const id = setTimeout(() => setQuery(search.trim()), 300);
     return () => clearTimeout(id);
   }, [search]);
+  const results = useRoute<{ apps: AppRow[] }>(
+    query.length >= MIN_APP_SEARCH ? `/apps?search=${encodeURIComponent(query)}` : null,
+  );
+  // useRoute keeps its last answer when the path goes null, so the results are gated on
+  // the box as typed NOW: cutting it under MIN_APP_SEARCH hides them without waiting out
+  // the debounce, as before.
+  const searching = search.trim().length >= MIN_APP_SEARCH && query.length >= MIN_APP_SEARCH;
+  const found = searching ? results.data?.apps : undefined;
 
   const connect = (slug: string) => {
     // Opened now, in the click, so a popup blocker lets it through; pointed at the link
     // once the server has made it.
     const tab = window.open("", "_blank");
-    setBusy(slug);
-    api<{ url: string }>("POST", `/apps/${slug}/connect`, { returnTo: location.href })
-      .then(({ url }) => {
-        if (tab) tab.location.href = url;
-        else location.href = url;
-        setFailed(undefined);
-      })
-      .catch((e: unknown) => {
-        tab?.close();
-        fail(e);
-      })
-      .finally(() => setBusy(undefined));
+    const link = { returnTo: location.href };
+    void run<{ url: string }>("POST", `/apps/${slug}/connect`, link, { key: slug }).then((a) => {
+      // undefined: it failed, and the reason is already `failed`.
+      if (!a) tab?.close();
+      else if (tab) tab.location.href = a.url;
+      else location.href = a.url;
+    });
   };
-  const disconnect = (slug: string) => {
-    setBusy(slug);
-    api("DELETE", `/apps/${slug}`)
-      .then(() => setFailed(undefined))
-      .catch(fail)
-      .finally(() => {
-        setBusy(undefined);
-        connected.reload();
-      });
-  };
+  const disconnect = (slug: string) =>
+    void run("DELETE", `/apps/${slug}`, undefined, { key: slug });
 
   const isConnected = new Set(connected.data?.apps.map((a) => a.slug));
   const row = (a: AppRow) => (
@@ -363,7 +354,7 @@ function Apps() {
         </ul>
       )}
       <Watches />
-      <Failure error={failed ?? connected.error} />
+      <Failure error={failed ?? connected.error ?? (searching ? results.error : undefined)} />
     </>
   );
 }
@@ -373,6 +364,7 @@ type WatchRow = { id: string; app: string; instruction: string; createdAt: strin
 /** What the speaker was asked to tell them about ("tell me when Sam emails"), to stop. */
 function Watches() {
   const { data, reload } = useRoute<{ watches: WatchRow[] }>("/watches", { pollMs: 15_000 });
+  const { run, busy, error } = useRouteMutation({ onSettled: reload });
   if (!data?.watches.length) return null;
   return (
     <section className="flex flex-col gap-1">
@@ -386,35 +378,29 @@ function Watches() {
             <button
               type="button"
               className={`${small} shrink-0`}
-              onClick={() => api("DELETE", `/watches/${w.id}`).finally(reload)}
+              disabled={busy === w.id}
+              onClick={() => void run("DELETE", `/watches/${w.id}`, undefined, { key: w.id })}
             >
               Stop
             </button>
           </li>
         ))}
       </ul>
+      <Failure error={error} />
     </section>
   );
 }
 
 // --- Running tasks ----------------------------------------------------------------------
 
-type Task = {
-  runId: string;
-  workflow: string;
-  status: string;
-  title: string;
-  detail?: string;
-  updatedAt: number;
-};
-
+/** GET /tasks (routes.ts, the SDK's clientRunsRoutes), polled, with its cancel. */
 function Tasks() {
-  const { data, error, reload } = useRoute<{ tasks: Task[] }>("/tasks", { pollMs: 5000 });
-  if (!data) return <Failure error={error} />;
-  if (data.tasks.length === 0) return <p className="text-xs opacity-60">Nothing running.</p>;
+  const { runs, error, cancel, cancelling } = useClientRuns("/tasks", { pollMs: 5000 });
+  if (!runs) return <Failure error={error} />;
+  if (runs.length === 0) return <p className="text-xs opacity-60">Nothing running.</p>;
   return (
     <ul className="flex flex-col gap-2">
-      {data.tasks.map((t) => (
+      {runs.map((t) => (
         <li key={t.runId} className="text-sm flex flex-col gap-0.5">
           <div className="flex justify-between gap-2">
             <span className="[overflow-wrap:anywhere]">{t.title}</span>
@@ -435,7 +421,8 @@ function Tasks() {
             <button
               type="button"
               className={`${small} self-start`}
-              onClick={() => api("DELETE", `/tasks/${t.runId}`).finally(reload)}
+              disabled={cancelling === t.runId}
+              onClick={() => void cancel(t.runId)}
             >
               Cancel
             </button>
@@ -494,12 +481,7 @@ function Memories() {
     pollMs: 15_000,
   });
   const [draft, setDraft] = useState("");
-  const [failed, setFailed] = useState<string>();
-  const run = (p: Promise<unknown>) =>
-    p
-      .then(() => setFailed(undefined))
-      .catch((e: unknown) => setFailed(e instanceof Error ? e.message : String(e)))
-      .finally(reload);
+  const { run, error: failed } = useRouteMutation({ onSettled: reload });
   if (!data) return <Failure error={error} />;
   return (
     <>
@@ -513,13 +495,13 @@ function Memories() {
           <li key={m.id} className="flex gap-2 items-start">
             <EditableText
               value={m.memory}
-              onSave={(text) => run(api("PUT", `/memories/${m.id}`, { text }))}
+              onSave={(text) => void run("PUT", `/memories/${m.id}`, { text })}
             />
             <button
               type="button"
               className={small}
               title="Forget this"
-              onClick={() => run(api("DELETE", `/memories/${m.id}`))}
+              onClick={() => void run("DELETE", `/memories/${m.id}`)}
             >
               ✕
             </button>
@@ -531,7 +513,10 @@ function Memories() {
         onSubmit={(e) => {
           e.preventDefault();
           if (!draft.trim()) return;
-          void run(api("POST", "/memories", { text: draft }).then(() => setDraft("")));
+          // Cleared only once it is saved: a failed add keeps what was typed.
+          void run("POST", "/memories", { text: draft }).then((added) => {
+            if (added !== undefined) setDraft("");
+          });
         }}
       >
         <input
@@ -592,12 +577,7 @@ type ContextData = {
 
 function Context() {
   const { data, error, reload } = useRoute<ContextData>("/context", { pollMs: 15_000 });
-  const [failed, setFailed] = useState<string>();
-  const run = (p: Promise<unknown>) =>
-    p
-      .then(() => setFailed(undefined))
-      .catch((e: unknown) => setFailed(e instanceof Error ? e.message : String(e)))
-      .finally(reload);
+  const { run, error: failed } = useRouteMutation({ onSettled: reload });
   if (!data) return <Failure error={error} />;
   return (
     <>
@@ -610,7 +590,7 @@ function Context() {
           <EditableText
             rows={6}
             value={data.older.summary}
-            onSave={(summary) => run(api("PUT", "/context/older", { summary }))}
+            onSave={(summary) => void run("PUT", "/context/older", { summary })}
           />
         </section>
       )}
@@ -627,7 +607,7 @@ function Context() {
               <button
                 type="button"
                 className={small}
-                onClick={() => run(api("DELETE", `/context/digests/${d.session_id}`))}
+                onClick={() => void run("DELETE", `/context/digests/${d.session_id}`)}
               >
                 Delete
               </button>
@@ -635,7 +615,7 @@ function Context() {
             <EditableText
               rows={4}
               value={d.digest}
-              onSave={(digest) => run(api("PUT", `/context/digests/${d.session_id}`, { digest }))}
+              onSave={(digest) => void run("PUT", `/context/digests/${d.session_id}`, { digest })}
             />
           </div>
         ))}

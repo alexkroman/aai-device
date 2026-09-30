@@ -1,3 +1,4 @@
+import { hashCode } from "@alexkroman1/aai";
 import { installFetchRoutes } from "@alexkroman1/aai/testing/vitest";
 import { afterEach } from "vitest";
 import {
@@ -7,7 +8,6 @@ import {
   linkStatus,
   MAX_LINK_ATTEMPTS,
 } from "./link.ts";
-import { sha256 } from "./profile.ts";
 
 // The spoken code is the only thing between a stranger on the LAN and a speaker's
 // conversation, so these pin that it is single-use, short-lived and not guessable by
@@ -115,7 +115,7 @@ test("a new code replaces the browser's pending one", async () => {
   await createLinkCode(ctx, "browser-a");
   const second = await createLinkCode(ctx, "browser-a");
   expect(rows).toHaveLength(1);
-  expect(rows[0]?.code_sha256).toBe(await sha256(second.code));
+  expect(rows[0]?.code_sha256).toBe(await hashCode(second.code));
 });
 
 test("after an unlink, asking for a new code does not re-link the old speaker", async () => {
@@ -125,4 +125,11 @@ test("after an unlink, asking for a new code does not re-link the old speaker", 
   expect(await linkStatus(ctx, "browser-a")).toBe("kitchen");
   await createLinkCode(ctx, "browser-a");
   expect(await linkStatus(ctx, "browser-a")).toBeUndefined();
+});
+
+test("hashCode is the SHA-256 hex the code_sha256 column already holds", async () => {
+  // Rows written before the SDK's hashCode (by a hand-rolled SHA-256) must still claim.
+  expect(await hashCode("123456")).toBe(
+    "8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92",
+  );
 });

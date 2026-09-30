@@ -17,8 +17,8 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { parseEnv } from "node:util";
+import { ensureComposioWebhook } from "@alexkroman1/aai/experimental";
 
-const API = "https://backend.composio.dev/api/v3.1";
 const agentDir = fileURLToPath(new URL(".", import.meta.url));
 const envPath = `${agentDir}.env`;
 // The linked SDK's CLI, as `pnpm exec aai` would resolve it.
@@ -40,26 +40,9 @@ if (!key) {
   process.exit(1);
 }
 
-async function composio(method, path, body) {
-  const res = await fetch(`${API}${path}`, {
-    method,
-    headers: { "x-api-key": key, "content-type": "application/json" },
-    ...(body ? { body: JSON.stringify(body) } : {}),
-  });
-  const json = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(`Composio ${res.status}: ${json.error?.message ?? res.statusText}`);
-  return json;
-}
-
-const want = {
-  webhook_url: webhookUrl,
-  enabled_events: ["composio.trigger.message"],
-  version: "V3",
-};
-const { items = [] } = await composio("GET", "/webhook_subscriptions");
-const sub = items[0]
-  ? await composio("PATCH", `/webhook_subscriptions/${encodeURIComponent(items[0].id)}`, want)
-  : await composio("POST", "/webhook_subscriptions", want);
+// The SDK's ensureComposioWebhook: the project's one subscription created, or moved to
+// this URL, with V3 payloads and trigger events on; it answers the signing secret.
+const sub = await ensureComposioWebhook({ env: { COMPOSIO_API_KEY: key } }, webhookUrl);
 
 // On stdin, never argv, so the secret stays out of the process list.
 execFileSync(process.execPath, [aaiBin, "secret", "put", "--local", "COMPOSIO_WEBHOOK_SECRET"], {

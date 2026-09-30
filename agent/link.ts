@@ -1,5 +1,5 @@
+import { codeMatches, hashCode, mintDigitCode } from "@alexkroman1/aai";
 import type { EnvContext } from "@alexkroman1/aai/step";
-import { sha256 } from "./profile.ts";
 import { rest } from "./supabase.ts";
 
 // Joining a browser to a speaker's conversation. The page asks for a code (createLinkCode)
@@ -26,14 +26,14 @@ export async function createLinkCode(
   now = Date.now(),
 ): Promise<{ code: string; expiresAt: number }> {
   await rest(ctx, `/link_codes?browser_client=eq.${enc(browserClient)}`, { method: "DELETE" });
-  const [random = 0] = crypto.getRandomValues(new Uint32Array(1));
-  const code = String(random % 10 ** LINK_CODE_DIGITS).padStart(LINK_CODE_DIGITS, "0");
+  const code = mintDigitCode(LINK_CODE_DIGITS);
   const expiresAt = now + LINK_CODE_TTL_MS;
   await rest(ctx, "/link_codes", {
     method: "POST",
     prefer: "return=minimal",
     body: {
-      code_sha256: await sha256(code),
+      // hashCode is SHA-256 as lower-case hex, what this column has always held.
+      code_sha256: await hashCode(code),
       browser_client: browserClient,
       expires_at: new Date(expiresAt).toISOString(),
     },
@@ -61,8 +61,15 @@ export async function claimLinkCode(
       `&expires_at=gt.${new Date(now).toISOString()}&attempts=lt.${MAX_LINK_ATTEMPTS}`,
   );
   if (pending.length === 0) return { status: "none_pending" };
-  const hash = await sha256(said.replace(/\D/g, ""));
-  const match = pending.find((p) => p.code_sha256 === hash);
+  // codeMatches per row (it normalizes `said` and compares in constant time), not one
+  // hash looked up with ===: the lookup would be the non-constant-time compare again.
+  let match: (typeof pending)[number] | undefined;
+  for (const p of pending) {
+    if (await codeMatches(said, p.code_sha256)) {
+      match = p;
+      break;
+    }
+  }
   if (!match) {
     // Every pending code pays for a wrong guess: the guesser does not know which one it hit.
     const ids = pending.map((p) => p.id).join(",");

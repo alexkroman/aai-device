@@ -146,6 +146,7 @@ describe("claiming a call (sessionContext)", () => {
         headers: {
           apikey: "sb-test",
           authorization: "Bearer sb-test",
+          accept: "application/json",
           "content-type": "application/json",
           prefer: "return=representation",
         },
@@ -359,6 +360,7 @@ describe("report_outcome", () => {
         headers: {
           apikey: "sb-test",
           authorization: "Bearer sb-test",
+          accept: "application/json",
           "content-type": "application/json",
         },
         body: { outcome },
