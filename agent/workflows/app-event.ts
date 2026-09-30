@@ -13,7 +13,7 @@ export type AppEventInput = {
   instruction: string;
   app: string;
   trigger: string;
-  /** The event, compacted and capped (watches.ts eventText). */
+  /** The event, compacted and capped (routes.ts, composioTriggerText). */
   event: string;
 };
 

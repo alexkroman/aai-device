@@ -1,6 +1,6 @@
+import type { ComposioTriggerEvent } from "@alexkroman1/aai/experimental";
 import type { EnvContext } from "@alexkroman1/aai/step";
-import { fitToolResult, HttpError } from "@alexkroman1/aai/utils";
-import { call } from "./apps.ts";
+import { apps } from "./apps.ts";
 import { rest } from "./supabase.ts";
 
 // "Tell me when Sam emails", "let me know when a PR is assigned to me": Composio triggers
@@ -8,7 +8,7 @@ import { rest } from "./supabase.ts";
 // speaker's connected account plus the words to judge its events by, since a trigger is
 // coarser than what was asked ("a new email", not "a new email from Sam"). Composio POSTs
 // each event to the agent's webhook (routes.ts `POST /composio/webhook`), signed; that
-// route verifies it (the SDK's webhookRoute), matches it to its watch, and starts an
+// route verifies it (the SDK's composioWebhookRoute), matches it to its watch, and starts an
 // appEvent run, which decides whether the event is one they wanted and says it on the
 // speaker. A redelivered event is the same run (started with its id as the dedupe key).
 //
@@ -16,20 +16,6 @@ import { rest } from "./supabase.ts";
 // managed auth), so "when Sam emails" is minutes, not seconds.
 
 // --- Finding a trigger, and watching it -------------------------------------------------
-
-type TriggerTypes = {
-  items: {
-    slug: string;
-    name: string;
-    description: string;
-    type: "webhook" | "poll";
-    config: {
-      properties?: Record<string, { type?: string; description?: string }>;
-      required?: string[];
-    };
-    requires_webhook_endpoint_setup?: boolean;
-  }[];
-};
 
 export type FoundTrigger = {
   trigger: string;
@@ -43,32 +29,14 @@ export type FoundTrigger = {
 /** Most trigger types handed the model for one app. */
 export const MAX_FOUND_TRIGGERS = 8;
 
-/** The events an app can tell the speaker about. */
+/**
+ * The events an app can tell the speaker about. The SDK leaves out a trigger that needs a
+ * webhook registered with the provider by hand (a custom OAuth app's Slack events, say):
+ * one can't be set up by voice. `slug` is handed over as `trigger`, watch_app's word.
+ */
 export async function findTriggers(ctx: EnvContext, app: string): Promise<FoundTrigger[]> {
-  const q = new URLSearchParams({ toolkit_slugs: app, limit: "50" });
-  const { items } = await call<TriggerTypes>(ctx, "GET", `/triggers_types?${q}`);
-  return (
-    items
-      // One that needs a webhook registered with the provider by hand (a custom OAuth
-      // app's Slack events, say) can't be set up by voice.
-      .filter((t) => !t.requires_webhook_endpoint_setup)
-      .slice(0, MAX_FOUND_TRIGGERS)
-      .map((t) => {
-        const required = new Set(t.config.required ?? []);
-        return {
-          trigger: t.slug,
-          name: t.name,
-          description: t.description.replace(/\s+/g, " ").slice(0, 200),
-          polled: t.type === "poll",
-          config: Object.entries(t.config.properties ?? {}).map(([name, p]) => ({
-            name,
-            type: p.type ?? "any",
-            required: required.has(name),
-            ...(p.description ? { description: p.description.slice(0, 120) } : {}),
-          })),
-        };
-      })
-  );
+  const found = await apps.findTriggers(ctx, app, { limit: MAX_FOUND_TRIGGERS });
+  return found.map(({ slug, ...t }) => ({ trigger: slug, ...t }));
 }
 
 export type Watch = {
@@ -94,12 +62,7 @@ export async function watch(
 ): Promise<Watch> {
   if ((await watches(ctx, user)).length >= MAX_WATCHES)
     throw new WatchLimit(`A speaker can watch ${MAX_WATCHES} things at once.`);
-  const { trigger_id } = await call<{ trigger_id: string }>(
-    ctx,
-    "POST",
-    `/trigger_instances/${encodeURIComponent(w.trigger)}/upsert`,
-    { user_id: user, trigger_config: w.config },
-  );
+  const trigger_id = await apps.upsertTrigger(ctx, user, w.trigger, w.config);
   const row = {
     trigger_id,
     client_id: user,
@@ -134,11 +97,7 @@ export async function watches(ctx: EnvContext, user: string): Promise<Watch[]> {
 export async function unwatch(ctx: EnvContext, user: string, triggerId: string): Promise<boolean> {
   const mine = (await watches(ctx, user)).some((w) => w.trigger_id === triggerId);
   if (!mine) return false;
-  try {
-    await call(ctx, "DELETE", `/trigger_instances/manage/${encodeURIComponent(triggerId)}`);
-  } catch (err) {
-    if (!(err instanceof HttpError && err.status === 404)) throw err;
-  }
+  await apps.deleteTrigger(ctx, triggerId);
   await rest(ctx, `/app_watches?trigger_id=eq.${encodeURIComponent(triggerId)}`, {
     method: "DELETE",
   });
@@ -147,28 +106,17 @@ export async function unwatch(ctx: EnvContext, user: string, triggerId: string):
 
 // --- The webhook ------------------------------------------------------------------------
 
-/** A trigger event as Composio's V3 payload carries it. */
-export type TriggerEvent = {
-  id: string;
-  type: string;
-  metadata?: { trigger_id?: string; trigger_slug?: string; user_id?: string };
-  data?: unknown;
-};
-
 /** Most of an event handed to the model that judges it: the rest is HTML and headers. */
 export const MAX_EVENT_CHARS = 3000;
-
-/** The event, as the text the judging model reads. */
-export function eventText(data: unknown): string {
-  const fitted = fitToolResult(data ?? {}, { maxChars: MAX_EVENT_CHARS, maxString: 800 });
-  return JSON.stringify(fitted ?? {}).slice(0, MAX_EVENT_CHARS);
-}
 
 /**
  * The watch an event is for, or undefined when it is none of ours: its trigger must be
  * one a speaker asked for, owned by the user Composio says the event is for.
  */
-export async function watchFor(ctx: EnvContext, event: TriggerEvent): Promise<Watch | undefined> {
+export async function watchFor(
+  ctx: EnvContext,
+  event: ComposioTriggerEvent,
+): Promise<Watch | undefined> {
   const triggerId = event.metadata?.trigger_id;
   if (!triggerId) return undefined;
   const [w] = await rest<Watch[]>(

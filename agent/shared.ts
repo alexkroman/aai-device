@@ -41,7 +41,7 @@ export const appEvent = workflow({
     instruction: z.string().describe("What they asked to be told about, in their words"),
     app: z.string().describe("The app it came from, e.g. gmail"),
     trigger: z.string().describe("The Composio trigger that fired"),
-    event: z.string().describe("The event, compacted (watches.ts eventText)"),
+    event: z.string().describe("The event, compacted (composioTriggerText)"),
   }),
   run: appEventFlow,
 });

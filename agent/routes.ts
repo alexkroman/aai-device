@@ -6,19 +6,19 @@ import {
   type RouteRequest,
   route,
   routeError,
-  webhookRoute,
 } from "@alexkroman1/aai";
+import { composioTriggerText, composioWebhookRoute } from "@alexkroman1/aai/experimental";
 import { isToolFailure } from "@alexkroman1/aai/utils";
 import { z } from "zod";
 import { MIN_APP_SEARCH } from "./app-search.ts";
-import { connectLink, disconnectApp, listApps } from "./apps.ts";
+import { apps } from "./apps.ts";
 import { geocode } from "./google.ts";
 import { createLinkCode, linkStatus } from "./link.ts";
 import { addMemories, allMemories, forgetMemory, updateMemory } from "./memory.ts";
 import { normalizeEmail, readProfile, writeProfile } from "./profile.ts";
 import { appEvent } from "./shared.ts";
 import { rest } from "./supabase.ts";
-import { eventText, type TriggerEvent, unwatch, watches, watchFor } from "./watches.ts";
+import { MAX_EVENT_CHARS, unwatch, watches, watchFor } from "./watches.ts";
 
 // What the page's sidebar reads and edits, as the agent's own JSON endpoints under /api
 // (agent.ts `routes`): the household profile, the memories mem0 holds, the context each
@@ -245,7 +245,7 @@ export const routes: Record<string, RouteHandler> = {
       // Composio refuses a search under MIN_APP_SEARCH characters: nothing matches yet.
       if (search && search.length < MIN_APP_SEARCH) return { apps: [] };
       return {
-        apps: await listApps(ctx, req.clientId, search ? { search } : { connectedOnly: true }),
+        apps: await apps.listApps(ctx, req.clientId, search ? { search } : { connectedOnly: true }),
       };
     },
   }),
@@ -261,13 +261,13 @@ export const routes: Record<string, RouteHandler> = {
     }),
     requireClient: true,
     handler: async (req, ctx) => ({
-      url: await connectLink(ctx, req.clientId, app(req), req.body.returnTo),
+      url: await apps.connectLink(ctx, req.clientId, app(req), req.body.returnTo),
     }),
   }),
   "DELETE /apps/:app": route({
     requireClient: true,
     handler: async (req, ctx) => ({
-      disconnected: await disconnectApp(ctx, req.clientId, app(req)),
+      disconnected: await apps.disconnect(ctx, req.clientId, app(req)),
     }),
   }),
   // What the speaker was asked to tell them about (watches.ts), and stopping one.
@@ -291,32 +291,29 @@ export const routes: Record<string, RouteHandler> = {
 
   // --- Composio's webhook: events from watched apps --------------------------------------
   // Not the page's: Composio POSTs every trigger event here (watches.ts), signed with the
-  // project's webhook secret. The one route a stranger can reach on a hosted server, so
-  // nothing happens before the signature checks out (webhookRoute), and an event only
+  // project's webhook secret (COMPOSIO_WEBHOOK_SECRET). The one route a stranger can
+  // reach on a hosted server, so nothing happens before the signature checks out, and
+  // only a trigger event reaches the handler (other project events, a connection
+  // expiring, are acknowledged { ignored: <type> }): composioWebhookRoute. An event only
   // counts when its trigger is a watch of the user it claims to be for. A redelivery is
   // the same run: the event id is its dedupe key.
-  "POST /composio/webhook": webhookRoute(
-    { secretEnv: "COMPOSIO_WEBHOOK_SECRET" },
-    async (req, ctx) => {
-      const event = req.body as TriggerEvent;
-      // Other project events (a connection expiring) arrive here too: acknowledged, unused.
-      if (event.type !== "composio.trigger.message") return { ignored: event.type };
-      const w = await watchFor(ctx, event);
-      if (!w) return { ignored: "no such watch" };
-      await ctx.workflows.start(
-        appEvent,
-        {
-          clientId: w.client_id,
-          instruction: w.instruction,
-          app: w.app,
-          trigger: w.trigger_slug,
-          event: eventText(event.data),
-        },
-        { key: w.client_id, dedupeKey: event.id, label: w.instruction },
-      );
-      return { started: true };
-    },
-  ),
+  "POST /composio/webhook": composioWebhookRoute({}, async (event, ctx) => {
+    const w = await watchFor(ctx, event);
+    if (!w) return { ignored: "no such watch" };
+    await ctx.workflows.start(
+      appEvent,
+      {
+        clientId: w.client_id,
+        instruction: w.instruction,
+        app: w.app,
+        trigger: w.trigger_slug,
+        // Compacted and capped: the rest of an event is HTML and headers.
+        event: composioTriggerText(event.data, { maxChars: MAX_EVENT_CHARS }),
+      },
+      { key: w.client_id, dedupeKey: event.id, label: w.instruction },
+    );
+    return { started: true };
+  }),
 
   // --- Linking a browser to a speaker (link.ts) ------------------------------------------
   "POST /link": route({

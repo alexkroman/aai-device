@@ -1,8 +1,7 @@
 import { installFetchRoutes } from "@alexkroman1/aai/testing/vitest";
 import {
-  eventText,
   findTriggers,
-  MAX_EVENT_CHARS,
+  MAX_FOUND_TRIGGERS,
   MAX_WATCHES,
   unwatch,
   WatchLimit,
@@ -10,8 +9,8 @@ import {
   watchFor,
 } from "./watches.ts";
 
-// The webhook's signature check and its redelivery dedupe are the SDK's (webhookRoute,
-// the run's dedupe key); these pin what is the device's: an event counts only for a watch
+// The webhook's signature check and its redelivery dedupe are the SDK's
+// (composioWebhookRoute, the run's dedupe key), as are the Composio calls (composio()); these pin what is the device's: an event counts only for a watch
 // a speaker asked for and owns, a speaker can only stop its own watches, and what the
 // judge and the worker are handed.
 
@@ -133,9 +132,10 @@ test("the triggers offered are the ones that can be set up by voice", async () =
   expect(net.hits[0]?.searchParams.get("toolkit_slugs")).toBe("gmail");
 });
 
-test("an event is handed to the judge compacted and capped", () => {
-  const text = eventText({ from: "Sam", html: "<p>".repeat(10_000), empty: null });
-  expect(text.length).toBeLessThanOrEqual(MAX_EVENT_CHARS);
-  expect(text).toContain('"from":"Sam"');
-  expect(text).not.toContain("empty");
+test("at most MAX_FOUND_TRIGGERS are offered", async () => {
+  const item = (n: number) => ({ slug: `APP_EVENT_${n}`, name: `Event ${n}`, config: {} });
+  installFetchRoutes({
+    "GET backend.composio.dev": { body: { items: Array.from({ length: 20 }, (_, n) => item(n)) } },
+  });
+  expect(await findTriggers(ctx, "app")).toHaveLength(MAX_FOUND_TRIGGERS);
 });

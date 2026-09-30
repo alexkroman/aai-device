@@ -1,5 +1,5 @@
 import { mcpToolName, tool } from "@alexkroman1/aai";
-import { stubStepMcp } from "@alexkroman1/aai/experimental";
+import { COMPOSIO_MCP_TOOLS, stubStepMcp } from "@alexkroman1/aai/experimental";
 import { DEFAULT_CLIENT_DELIVERY_ATTEMPTS } from "@alexkroman1/aai/step";
 import { createToolContext, createWorkflowContext, runTool } from "@alexkroman1/aai/testing";
 import {
@@ -11,7 +11,6 @@ import {
 } from "@alexkroman1/aai/testing/vitest";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { z } from "zod";
-import { COMPOSIO_MCP_TOOLS } from "./apps.ts";
 import { appJob } from "./shared.ts";
 import appTask, { HANDOFF_LINE, TEXT_HANDOFF_LINE } from "./tools/app_task.ts";
 import { appEventFlow } from "./workflows/app-event.ts";
