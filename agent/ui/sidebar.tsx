@@ -181,23 +181,24 @@ function Link({ endSession }: { endSession: () => void }) {
   const [code, setCode] = useState<{ code: string; expiresAt: number }>();
   const [error, setError] = useState<string>();
 
-  // While a code is out, ask whether a speaker has claimed it.
+  // While a code is out, ask whether a speaker has claimed it: /link reads THIS browser's
+  // own pending code, so it goes as linked.own(), not the (still unset) linked speaker. A
+  // failed poll is only a missed tick; useRoute keeps asking.
+  const claim = useRoute<{ speakerClient: string | null }>(code ? "/link" : null, {
+    pollMs: 2000,
+    client: linked.own(),
+  });
+  const claimedBy = code ? claim.data?.speakerClient : undefined;
+  useEffect(() => {
+    if (claimedBy) switchTo(claimedBy, endSession);
+  }, [claimedBy, endSession]);
+  // An unclaimed code dies server-side at expiresAt; drop it here then too, which also
+  // stops the poll (path null) and brings back the button for a new one.
   useEffect(() => {
     if (!code) return;
-    const id = setInterval(() => {
-      if (Date.now() > code.expiresAt) {
-        setCode(undefined);
-        return;
-      }
-      api<{ speakerClient: string | null }>("GET", "/link", undefined, { as: "browser" })
-        .then(({ speakerClient }) => {
-          if (!speakerClient) return;
-          switchTo(speakerClient, endSession);
-        })
-        .catch(() => {});
-    }, 2000);
-    return () => clearInterval(id);
-  }, [code, endSession]);
+    const id = setTimeout(() => setCode(undefined), Math.max(0, code.expiresAt - Date.now()));
+    return () => clearTimeout(id);
+  }, [code]);
 
   if (speaker) {
     return (
@@ -256,25 +257,26 @@ type AppRow = { slug: string; name: string; logo: string; description: string; c
 function Apps() {
   const connected = useRoute<{ apps: AppRow[] }>("/apps", { pollMs: 5000 });
   const [search, setSearch] = useState("");
-  const [found, setFound] = useState<AppRow[]>();
+  const [query, setQuery] = useState("");
   const [busy, setBusy] = useState<string>();
   const [failed, setFailed] = useState<string>();
   const fail = (e: unknown) => setFailed(e instanceof Error ? e.message : String(e));
 
+  // Search once typing pauses: `query` trails `search` by 300 ms, and a new keystroke
+  // restarts the wait. Composio searches from MIN_APP_SEARCH letters; fewer reads nothing
+  // (path null) and shows the hint below.
   useEffect(() => {
-    const q = search.trim();
-    // Composio searches from MIN_APP_SEARCH letters; fewer shows the hint below.
-    if (q.length < MIN_APP_SEARCH) {
-      setFound(undefined);
-      return;
-    }
-    const id = setTimeout(() => {
-      api<{ apps: AppRow[] }>("GET", `/apps?search=${encodeURIComponent(q)}`)
-        .then(({ apps }) => setFound(apps))
-        .catch((e: unknown) => setFailed(e instanceof Error ? e.message : String(e)));
-    }, 300);
+    const id = setTimeout(() => setQuery(search.trim()), 300);
     return () => clearTimeout(id);
   }, [search]);
+  const results = useRoute<{ apps: AppRow[] }>(
+    query.length >= MIN_APP_SEARCH ? `/apps?search=${encodeURIComponent(query)}` : null,
+  );
+  // useRoute keeps its last answer when the path goes null, so the results are gated on
+  // the box as typed NOW: cutting it under MIN_APP_SEARCH hides them without waiting out
+  // the debounce, as before.
+  const searching = search.trim().length >= MIN_APP_SEARCH && query.length >= MIN_APP_SEARCH;
+  const found = searching ? results.data?.apps : undefined;
 
   const connect = (slug: string) => {
     // Opened now, in the click, so a popup blocker lets it through; pointed at the link
@@ -363,7 +365,7 @@ function Apps() {
         </ul>
       )}
       <Watches />
-      <Failure error={failed ?? connected.error} />
+      <Failure error={failed ?? connected.error ?? (searching ? results.error : undefined)} />
     </>
   );
 }
