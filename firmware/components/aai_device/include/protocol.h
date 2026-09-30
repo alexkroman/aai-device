@@ -54,8 +54,10 @@ bool proto_valid_client_id(const char *id);
 // /inbox?client=<client_id>. False for a URL without a host, a bad id, or overflow.
 bool proto_inbox_url(const char *agent_url, const char *client_id, char *out, size_t out_len);
 
-#define PROTO_NOTICE_ID_MAX    128
-#define PROTO_NOTICE_MAX_BYTES ((size_t)60 * 16000 * 2)  // a minute of 16 kHz PCM16
+#define PROTO_NOTICE_ID_MAX 128
+// Five minutes of 16 kHz PCM16: a sanity bound, not a memory one. A notice past
+// NOTICE_LOAD_MAX streams to the speaker, and an app answer ran past one minute.
+#define PROTO_NOTICE_MAX_BYTES ((size_t)5 * 60 * 16000 * 2)
 
 typedef struct {
     char id[PROTO_NOTICE_ID_MAX + 1];

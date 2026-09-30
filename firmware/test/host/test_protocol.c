@@ -275,6 +275,16 @@ static void test_notice(void)
     TEST_ASSERT_TRUE(parse_notice("{\"type\":\"notice\",\"id\":\"r\",\"event\":\"ring\",\"bytes\":0}"));
     TEST_ASSERT_EQUAL_STRING("", notice.text);
     TEST_ASSERT_EQUAL(0, notice.bytes);
+    // Past a minute, as a long app answer runs: taken, and streamed rather than loaded.
+    TEST_ASSERT_TRUE(parse_notice("{\"type\":\"notice\",\"id\":\"r\",\"event\":\"app\",\"bytes\":2500000}"));
+    TEST_ASSERT_EQUAL(2500000, notice.bytes);
+    char json[120];
+    snprintf(json, sizeof(json), "{\"type\":\"notice\",\"id\":\"r\",\"event\":\"e\",\"bytes\":%zu}",
+             PROTO_NOTICE_MAX_BYTES);
+    TEST_ASSERT_TRUE(parse_notice(json));
+    snprintf(json, sizeof(json), "{\"type\":\"notice\",\"id\":\"r\",\"event\":\"e\",\"bytes\":%zu}",
+             PROTO_NOTICE_MAX_BYTES + 2);
+    TEST_ASSERT_FALSE(parse_notice(json));
 }
 
 static void test_notice_refused(void)
