@@ -1,0 +1,14 @@
+{
+  "ignores": [
+    "**/node_modules/**",
+    "**/build*/**",
+    "firmware/managed_components/**",
+    // The agents' prompts are the model's input, not documentation: the SDK skips its
+    // templates' system-prompt.md for the same reason.
+    "*/system-prompt.md",
+    // Vendored from upstream at the version skills-lock.json pins; a local edit would be
+    // overwritten by the next update.
+    ".agents/**",
+    ".claude/skills/composio/**"
+  ]
+}

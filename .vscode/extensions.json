@@ -1,3 +1,8 @@
 {
-  "recommendations": ["biomejs.biome", "charliermarsh.ruff", "ms-vscode.cpptools", "editorconfig.editorconfig"]
+  "recommendations": [
+    "biomejs.biome",
+    "charliermarsh.ruff",
+    "ms-vscode.cpptools",
+    "editorconfig.editorconfig"
+  ]
 }

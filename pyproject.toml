@@ -5,4 +5,4 @@ extend-exclude = ["**/managed_components", "**/build", "agent"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "PTH", "RUF"]
-ignore = ["RUF001"]  # the e2e output intentionally prints an emoji
+ignore = ["RUF001"] # the e2e output intentionally prints an emoji

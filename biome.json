@@ -12,8 +12,7 @@
       "!firmware",
       "!supabase",
       "!.claude",
-      "!.agents",
-      "!.vscode"
+      "!.agents"
     ]
   },
   "linter": {
@@ -46,9 +45,7 @@
         "useFilenamingConvention": {
           "level": "error",
           "options": {
-            "filenameCases": [
-              "kebab-case"
-            ],
+            "filenameCases": ["kebab-case"],
             "requireAscii": true
           }
         },
@@ -156,9 +153,16 @@
   },
   "overrides": [
     {
-      "includes": [
-        "**/_*-harness.ts"
-      ],
+      "includes": [".vscode/**"],
+      "json": {
+        "parser": {
+          "allowComments": true,
+          "allowTrailingCommas": true
+        }
+      }
+    },
+    {
+      "includes": ["**/_*-harness.ts"],
       "linter": {
         "rules": {
           "nursery": {
@@ -198,9 +202,7 @@
       }
     },
     {
-      "includes": [
-        "**/tools/**"
-      ],
+      "includes": ["**/tools/**"],
       "linter": {
         "rules": {
           "style": {

@@ -7,3 +7,4 @@ build-host/
 build-fuzz/
 build-cov/
 test/device/.last-pass
+Kconfig.new

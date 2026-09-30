@@ -59,8 +59,7 @@ MY_API_KEY=secret-value
 **Production** — set secrets on the server:
 
 ```sh
-pnpm exec aai secret put MY_KEY# Set a secret (prompts for value)
+pnpm exec aai secret put MY_KEY  # Set a secret (prompts for value)
 pnpm exec aai secret list    # List secret names
-pnpm exec aai secret delete MY_KEY# Remove a secret
+pnpm exec aai secret delete MY_KEY  # Remove a secret
 ```
-

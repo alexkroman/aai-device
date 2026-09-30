@@ -9,7 +9,8 @@
 #   make test-device  on-device Unity tests (board plugged in, `make agent` running)
 #   make test-e2e     acoustic end-to-end (production firmware, speakers on, agent running)
 #   make format       rewrite every file to the house style: C (clang-format), Python (ruff),
-#                     TS/JS/JSON/CSS (Biome), SQL (sqlfluff), shell (shfmt), CMake (gersemi)
+#                     TS/JS/JSON/CSS (Biome), SQL (sqlfluff), shell (shfmt), CMake (gersemi),
+#                     Markdown (markdownlint), TOML (taplo), YAML (Prettier)
 #   make hooks        format staged files on every commit (.githooks/pre-commit); `make check`
 #                     installs it too
 #
@@ -41,6 +42,17 @@ SQLFLUFF     := $(UVX) sqlfluff@3.4.2
 GERSEMI      := $(UVX) gersemi@0.21.0
 SHFMT        := $(UVX) --from shfmt-py@3.12.0.2 shfmt
 SHELLCHECK   := $(UVX) --from shellcheck-py@0.10.0.1 shellcheck
+ACTIONLINT   := $(UVX) --from actionlint-py==1.7.12.25 actionlint
+TAPLO        := $(UVX) --from taplo==0.9.3 taplo
+KCONFCHECK   := $(UVX) --from esp-idf-kconfig==2.5.0 python -m kconfcheck
+# The two that only ship on npm, pinned the same way.
+NPX          ?= npx --yes
+MARKDOWNLINT := $(NPX) markdownlint-cli2@0.18.1
+PRETTIER     := $(NPX) prettier@3.6.2
+BIOME        := agent/node_modules/.bin/biome
+YAML_SOURCES  = $(shell git ls-files '*.yml' '*.yaml')
+# JSON Biome can't reach from inside agent/ or caller/, where lint-agent/lint-caller run it.
+ROOT_JSON     = $(shell git ls-files '*.json' ':!agent' ':!caller' ':!firmware')
 SH_SOURCES    = $(shell git ls-files '*.sh' .githooks)
 CMAKE_SOURCES = $(shell git ls-files '*CMakeLists.txt')
 CJSON     := $(FW)/managed_components/espressif__cjson/cJSON/cJSON.c
@@ -55,7 +67,7 @@ DEVICE_STAMP := $(FW)/test/device/.last-pass
 AAI_SDK   ?= $(HOME)/Code/aai/agent-builtin-api-tools
 
 .PHONY: composio-webhook check require-idf lint lint-format lint-tidy lint-cppcheck lint-python lint-agent lint-caller \
-        lint-shell lint-sql lint-cmake sdk-dist build-firmware test-host test-fuzz test-coverage check-contract \
+        lint-shell lint-sql lint-cmake lint-actions lint-markdown lint-json lint-toml lint-kconfig lint-yaml sdk-dist build-firmware test-host test-fuzz test-coverage check-contract \
         check-size test-agent test-caller eval-agent eval-caller test-supabase device-freshness test-device test-e2e format format-files \
         hooks agent caller supabase flash monitor ota-serve coredump
 
@@ -73,7 +85,8 @@ require-idf:
 
 # ---- lint -------------------------------------------------------------------
 
-lint: lint-format lint-tidy lint-cppcheck lint-python lint-agent lint-caller lint-shell lint-sql lint-cmake
+lint: lint-format lint-tidy lint-cppcheck lint-python lint-agent lint-caller lint-shell lint-sql lint-cmake \
+      lint-actions lint-markdown lint-json lint-toml lint-kconfig lint-yaml
 
 # C formatting. The other languages' format checks are in their own lint-* targets.
 lint-format:
@@ -107,6 +120,33 @@ lint-sql:
 
 lint-cmake:
 	$(GERSEMI) --check $(CMAKE_SOURCES)
+
+# The CI workflows, with ShellCheck over their `run:` scripts: the pinned one, not whichever
+# the machine has (GitHub's runners ship their own).
+lint-actions:
+	$(ACTIONLINT) -shellcheck="$$($(UVX) --from shellcheck-py@0.10.0.1 python -c \
+	  'import shutil; print(shutil.which("shellcheck"))')"
+
+# The SDK's markdownlint rules (.markdownlint.yaml; what's skipped is in .markdownlint-cli2.jsonc).
+lint-markdown:
+	$(MARKDOWNLINT) '**/*.md'
+
+# Biome over the root and .vscode JSON; agent/ and caller/ are lint-agent's and lint-caller's.
+lint-json:
+	$(BIOME) check $(ROOT_JSON)
+
+lint-toml:
+	$(TAPLO) fmt --check
+	$(TAPLO) lint
+
+# ESP-IDF's Kconfig style and syntax checker. It has no fix mode: a failure leaves its
+# suggestion beside the file as Kconfig.new.
+lint-kconfig:
+	$(KCONFCHECK) $(shell git ls-files '*Kconfig*')
+
+# Format only (Prettier); lint-actions is what reads the workflows for mistakes.
+lint-yaml:
+	$(PRETTIER) --check $(YAML_SOURCES)
 
 # tsc reads the linked SDK's types from its dist/*.d.ts (AAI_DEV_SOURCE reaches Node and
 # Vite, not the compiler), so the typechecks and agent tests build it first. Turbo rebuilds
@@ -233,6 +273,10 @@ format:
 	$(SQLFLUFF) format supabase
 	$(SHFMT) --write $(SH_SOURCES)
 	$(GERSEMI) --in-place $(CMAKE_SOURCES)
+	$(MARKDOWNLINT) --fix '**/*.md' || true
+	$(BIOME) check --write $(ROOT_JSON)
+	$(TAPLO) fmt
+	$(PRETTIER) --write --log-level=warn $(YAML_SOURCES)
 
 # Formats just FILES (the pre-commit hook's staged files), each with its language's formatter.
 # Formatting only: a lint finding is `make check`'s and CI's to report, not a reason to refuse
@@ -242,11 +286,14 @@ only = $(filter $(1),$(FILES))
 format-files:
 	$(if $(call only,%.c %.h),$(CLANG_FORMAT) -i $(call only,%.c %.h))
 	$(if $(call only,%.py),$(RUFF) check --fix-only -q $(call only,%.py) && $(RUFF) format -q $(call only,%.py))
-	$(if $(call only,agent/% caller/%),agent/node_modules/.bin/biome check --write --linter-enabled=false \
-	  --no-errors-on-unmatched --files-ignore-unknown=true $(call only,agent/% caller/%))
+	$(if $(call only,agent/% caller/% %.json),$(BIOME) check --write --linter-enabled=false \
+	  --no-errors-on-unmatched --files-ignore-unknown=true $(call only,agent/% caller/% %.json))
 	$(if $(call only,%.sql),$(SQLFLUFF) format $(call only,%.sql) >/dev/null)
 	$(if $(call only,%.sh .githooks/%),$(SHFMT) --write $(call only,%.sh .githooks/%))
 	$(if $(call only,%CMakeLists.txt),$(GERSEMI) --in-place $(call only,%CMakeLists.txt))
+	$(if $(call only,%.md),$(MARKDOWNLINT) --fix $(call only,%.md) >/dev/null || true)
+	$(if $(call only,%.toml),$(TAPLO) fmt $(call only,%.toml) 2>/dev/null)
+	$(if $(call only,%.yml %.yaml),$(PRETTIER) --write --log-level=warn $(call only,%.yml %.yaml))
 
 # AAI_DEV_SOURCE=1: the linked SDK runs from its src/ (the CLI, the runtime it builds and
 # every SDK import Vite bundles into the agent), so an SDK edit shows up with no build.

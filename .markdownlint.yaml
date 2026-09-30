@@ -1,0 +1,5 @@
+# The SDK's (alexkroman/agent) markdownlint rules. make lint-markdown / make format.
+MD013:
+  line_length: 100
+  tables: false
+  code_blocks: false

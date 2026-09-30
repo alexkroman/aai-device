@@ -26,7 +26,7 @@ env:
 
 jobs:
   agents:
-    name: Agents (Biome, tsc, tests, scripted evals, SDK contract)
+    name: Agents (Biome, tsc, tests, scripted evals, SDK contract; root JSON)
     runs-on: ubuntu-latest
     env:
       AAI_SDK: ${{ github.workspace }}/../aai/agent-builtin-api-tools
@@ -46,7 +46,7 @@ jobs:
         run: |
           (cd agent && pnpm install --frozen-lockfile)
           (cd caller && pnpm install --frozen-lockfile)
-      - run: make lint-agent lint-caller
+      - run: make lint-agent lint-caller lint-json
       - run: make test-agent test-caller
       - run: make eval-agent eval-caller
       - run: make check-contract
@@ -90,9 +90,14 @@ jobs:
       - run: make test-supabase SUPABASE_UP='supabase db start'
 
   lint:
-    name: Lint and format (Python, SQL, shell, CMake)
+    name: Lint and format (Python, SQL, shell, CMake, workflows, Markdown, TOML, Kconfig, YAML)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
       - uses: astral-sh/setup-uv@v6
+      # markdownlint and Prettier ship on npm only.
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
       - run: make lint-python lint-sql lint-shell lint-cmake
+      - run: make lint-actions lint-markdown lint-toml lint-kconfig lint-yaml
