@@ -21,7 +21,7 @@ import { HttpError, spokenErrorReason } from "@alexkroman1/aai/utils";
 import { z } from "zod";
 import { CONNECT_HINT, composioMcp } from "../apps.ts";
 import { findTriggers, unwatch, WatchLimit, watch, watches } from "../watches.ts";
-import { TEXT_STEP, type Texted, textReport } from "./text.ts";
+import { TEXT_STEP, type Texted, textOwner } from "./text.ts";
 
 // EVERYTHING the speaker does on the household's apps, from "what's on my calendar" to
 // "summarize my last 50 emails" to "tell me when Sam emails": a Composio action is round
@@ -96,7 +96,7 @@ export async function appJobFlow(input: AppJobInput, ctx: WorkflowContext) {
   let texted: Texted = { sent: false };
   if (input.text) {
     const message = await ctx.step("writeText", () => writeText(input.task, answer));
-    texted = await ctx.step("text", () => textReport(input, message), TEXT_STEP);
+    texted = await ctx.step("text", () => textOwner(input.phone, message), TEXT_STEP);
   }
   await ctx.step("announce", () => announce(runId, input, said, texted), {
     maxAttempts: DEFAULT_CLIENT_DELIVERY_ATTEMPTS,

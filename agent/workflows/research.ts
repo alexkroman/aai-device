@@ -8,7 +8,7 @@ import { DEFAULT_CLIENT_DELIVERY_ATTEMPTS, stepSayOnClient } from "@alexkroman1/
 import { spokenErrorReason } from "@alexkroman1/aai/utils";
 import { z } from "zod";
 import { BRIEF_SYSTEM, reportSystem, SPOKEN_SUMMARY_SYSTEM } from "./research-prompts.ts";
-import { TEXT_STEP, type Texted, textReport } from "./text.ts";
+import { TEXT_STEP, type Texted, textOwner } from "./text.ts";
 
 // Deep research: the SDK's deepResearchWorkflow (brief, plan, one researcher per angle,
 // gaps, second wave, report), with a speaker's prompts and delivery. Minutes of work, so
@@ -52,7 +52,7 @@ export const researchWorkflow = deepResearchWorkflow({
   deliver: async (result, input, ctx) => {
     const report = withSources(input.topic, result.report, result.sources);
     const texted: Texted = input.text
-      ? await ctx.step("text", () => textReport(input, report), TEXT_STEP)
+      ? await ctx.step("text", () => textOwner(input.phone, report), TEXT_STEP)
       : { sent: false };
     const { runId } = ctx;
     if (input.clientId) {

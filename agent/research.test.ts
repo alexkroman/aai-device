@@ -12,7 +12,7 @@ import { research } from "./shared.ts";
 import deepResearch from "./tools/deep_research.ts";
 import { announce, researchWorkflow, withSources } from "./workflows/research.ts";
 import { BRIEF_SYSTEM } from "./workflows/research-prompts.ts";
-import { TEXT_STEP, textReport } from "./workflows/text.ts";
+import { TEXT_STEP, textOwner } from "./workflows/text.ts";
 
 // The research stages themselves (brief, angles, researchers, gaps, report) are the SDK's
 // deepResearchWorkflow and tested there; this pins the speaker's side of it: its prompts,
@@ -159,7 +159,7 @@ describe("the research workflow", () => {
   });
 });
 
-describe("textReport", () => {
+describe("textOwner", () => {
   afterEach(() => vi.unstubAllEnvs());
 
   function textbelt() {
@@ -172,7 +172,7 @@ describe("textReport", () => {
 
   test("texts an allowlisted number the client reported", async () => {
     const sent = textbelt();
-    expect(await textReport({ phone: "+15555550111" }, "The report.")).toEqual({
+    expect(await textOwner("+15555550111", "The report.")).toEqual({
       sent: true,
     });
     expect(sent()).toMatchObject({
@@ -184,7 +184,7 @@ describe("textReport", () => {
 
   test("a number the client made up is ignored: the owner gets it", async () => {
     const sent = textbelt();
-    await textReport({ phone: "+15555550999" }, "The report.");
+    await textOwner("+15555550999", "The report.");
     expect(sent().phone).toBe("+15555550100");
   });
 
@@ -192,17 +192,26 @@ describe("textReport", () => {
     vi.stubEnv("TEXTBELT_KEY", "k");
     vi.stubEnv("SMS_TO_PHONE", "");
     const fetched = installStubStepFetch(() => ({ body: { success: true } }));
-    expect(await textReport({}, "r")).toEqual({ sent: false });
+    expect(await textOwner(undefined, "r")).toEqual({ sent: false });
     expect(fetched.calls).toEqual([]);
   });
 
   test("links are taken out before Textbelt sees the report", async () => {
     const sent = textbelt();
-    await textReport(
-      { phone: "+15555550111" },
+    await textOwner(
+      "+15555550111",
       "It works [1].\n\nSources:\n[1] https://example.com/heat-pumps",
     );
     expect(sent().message).toBe("It works [1].");
+  });
+
+  test("a recipient with no TEXTBELT_KEY fails the step for good, naming the key", async () => {
+    vi.stubEnv("TEXTBELT_KEY", "");
+    vi.stubEnv("SMS_TO_PHONE", "+15555550100");
+    await expect(textOwner(undefined, "The report.")).rejects.toMatchObject({
+      name: "FatalError",
+      message: expect.stringContaining("TEXTBELT_KEY"),
+    });
   });
 
   test("a refusal is an answer, not a failed run, and never quotes the key", async () => {
@@ -215,7 +224,7 @@ describe("textReport", () => {
           "Sorry, ability to send URLs via text is limited to verified accounts. Please go to https://textbelt.com/whitelist?key=test-key-123456 or email support.",
       },
     }));
-    const texted = await textReport({}, "The report.");
+    const texted = await textOwner(undefined, "The report.");
     expect(texted).toMatchObject({
       sent: false,
       why: expect.stringContaining("verified accounts"),
