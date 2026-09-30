@@ -2,12 +2,8 @@
 import deployedDef from "virtual:aai/agent";
 import { assemblyAIPipeline, DEFAULT_SYSTEM_PROMPT } from "@alexkroman1/aai";
 import { assemblyAIStt } from "@alexkroman1/aai/stt";
-import {
-  commandedBuiltins,
-  createStubWorkflows,
-  expectDeployable,
-  expectPromptBuiltinsDeclared,
-} from "@alexkroman1/aai/testing";
+import { expectDeployable, expectPromptBuiltinsDeclared } from "@alexkroman1/aai/testing";
+import { installFetchRoutes, installStubWorkflows } from "@alexkroman1/aai/testing/vitest";
 import { assemblyAITts } from "@alexkroman1/aai/tts";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import agentDef from "./agent.ts";
@@ -28,21 +24,17 @@ const onSessionEnd = agentDef.onSessionEnd as NonNullable<typeof agentDef.onSess
 
 /** Supabase and mem0 answering by URL; anything unrouted is a 404. */
 function backends(routes: { profile?: unknown; memories?: unknown; down?: boolean }) {
-  const fetch = vi.fn(async (input: string | URL | Request) => {
-    const url = String(input);
-    if (routes.down) return new Response("down", { status: 503 });
-    if (url.includes("/rest/v1/profile")) return Response.json(routes.profile ?? []);
-    if (url.includes("api.mem0.ai")) return Response.json({ results: routes.memories ?? [] });
-    if (url.includes("/rest/v1/")) return Response.json([]);
-    return new Response("not found", { status: 404 });
-  });
-  vi.stubGlobal("fetch", fetch);
-  return fetch;
+  const down = { status: 503, body: "down" };
+  return installFetchRoutes(
+    {
+      "http://supabase.test/rest/v1/profile": routes.down ? down : { body: routes.profile ?? [] },
+      "http://supabase.test/rest/v1/": routes.down ? down : { body: [] },
+      "api.mem0.ai": routes.down ? down : { body: { results: routes.memories ?? [] } },
+    },
+    { unmatched: "notFound" },
+  );
 }
-afterEach(() => {
-  vi.unstubAllGlobals();
-  vi.restoreAllMocks();
-});
+afterEach(() => vi.restoreAllMocks());
 
 describe("the speaker agent", () => {
   test("is deployable as a pipeline: AssemblyAI stt without Voice Focus, the default llm, jane", () => {
@@ -62,7 +54,7 @@ describe("the speaker agent", () => {
     expect(agentDef.description).toMatch(/ESP32-S3/);
   });
 
-  test("the builtins are pinned, with think kept and the SDK's text_me left out", () => {
+  test("the builtins are pinned, with think kept and the SDK's text_me", () => {
     // Order-sensitive on purpose: a builtin added or dropped should be a diff here.
     expect(deployedDef.builtinTools).toEqual([
       "think",
@@ -72,9 +64,12 @@ describe("the speaker agent", () => {
       "calculate",
       "visit_webpage",
       "run_code",
+      "text_me",
     ]);
-    // tools/text_me.ts replaces the builtin; declaring both would be two text_me tools.
-    expect(deployedDef.builtinTools).not.toContain("text_me");
+  });
+
+  test("notices are spoken at the board's own rate, so the firmware needs no resampler", () => {
+    expect(agentDef.clientInbox?.sampleRate).toBe(16_000);
   });
 
   test("the custom tools are exactly tools/, and none shadows a declared builtin", () => {
@@ -95,7 +90,6 @@ describe("the speaker agent", () => {
       "remember",
       "remind_me",
       "stop",
-      "text_me",
       "update_profile",
     ]);
     const builtins = new Set<string>(deployedDef.builtinTools ?? []);
@@ -107,9 +101,9 @@ describe("the speaker agent", () => {
     // could not notice the file going missing.
     const prompt = String(deployedDef.systemPrompt);
     expect(prompt).not.toBe(DEFAULT_SYSTEM_PROMPT);
-    // A custom tool of a builtin's name (tools/text_me.ts, tools/remember.ts) declares it.
-    expectPromptBuiltinsDeclared(deployedDef);
-    expect(commandedBuiltins({ systemPrompt: prompt }).sort()).toEqual([
+    const tools = Object.keys(deployedDef.tools ?? {});
+    // `remember` counts because tools/remember.ts, of a builtin's name, declares it.
+    expect(expectPromptBuiltinsDeclared(deployedDef).sort()).toEqual([
       "brave_search",
       "calculate",
       "open_meteo",
@@ -118,7 +112,6 @@ describe("the speaker agent", () => {
       "text_me",
       "visit_webpage",
     ]);
-    const tools = Object.keys(deployedDef.tools ?? {});
     const named = new Set(prompt.match(/\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/g) ?? []);
     // Words the prompt quotes from tool inputs and results, not tool names.
     for (const word of ["in_seconds", "read_back", "say_if_not_said"]) named.delete(word);
@@ -199,7 +192,7 @@ describe("the speaker agent", () => {
 
 describe("a session's start", () => {
   test("the saved home address becomes the session's location, and history is windowed", async () => {
-    const fetch = backends({
+    const net = backends({
       profile: [{ key: "home_address", value: "742 Evergreen Terrace, Springfield" }],
       memories: [{ id: "m1", memory: "Biscuit the dog is allergic to chicken" }],
     });
@@ -213,19 +206,17 @@ describe("a session's start", () => {
     expect(ctx?.historySince).toBeLessThanOrEqual(Date.now() - VERBATIM_WINDOW_MS);
     expect(ctx?.refuse).toBeUndefined();
     // The speaker's own history is looked up by its client id.
-    const urls = fetch.mock.calls.map(([u]) => String(u));
-    expect(urls.some((u) => u.includes("/conversation_digests?client_id=eq.spk-1"))).toBe(true);
-    expect(urls.some((u) => u.includes("/older_history?client_id=eq.spk-1"))).toBe(true);
+    expect(
+      net.to("http://supabase.test/rest/v1/conversation_digests?client_id=eq.spk-1"),
+    ).not.toEqual([]);
+    expect(net.to("http://supabase.test/rest/v1/older_history?client_id=eq.spk-1")).not.toEqual([]);
   });
 
   test("no speaker id, no speaker history; no saved address, the client's location stands", async () => {
-    const fetch = backends({});
+    const net = backends({});
     const ctx = await sessionContext({ sessionId: "s1", env, signal });
     expect(ctx?.location).toBeUndefined();
-    const urls = fetch.mock.calls.map(([u]) => String(u));
-    expect(
-      urls.some((u) => u.includes("conversation_digests") || u.includes("older_history")),
-    ).toBe(false);
+    expect(net.to(/conversation_digests|older_history/)).toEqual([]);
   });
 
   test("a backend outage never refuses the session: it starts, saying memory is unreachable", async () => {
@@ -240,25 +231,20 @@ describe("a session's start", () => {
 });
 
 describe("a session's end", () => {
-  function recorder() {
-    const start = vi.fn(async () => "wrun_1");
-    return { start, workflows: createStubWorkflows({ start }) };
-  }
-
-  test("memorizes the conversation, keyed by session and watermark", async () => {
-    const { start, workflows } = recorder();
+  test("memorizes the conversation, keyed and deduped by session and watermark", async () => {
+    const workflows = installStubWorkflows({ runId: "wrun_1" });
     await onSessionEnd({ sessionId: "s1", clientId: "spk-1", env, workflows, lastEventIndex: 41 });
-    expect(start).toHaveBeenCalledWith(
+    expect(workflows.start).toHaveBeenCalledWith(
       memorize,
       { clientId: "spk-1", sessionId: "s1", throughEvent: 41 },
-      { key: "s1:41" },
+      { key: "s1:41", dedupeKey: "s1:41" },
     );
   });
 
   test("nothing to memorize without a speaker, or before the first event", async () => {
-    const { start, workflows } = recorder();
+    const workflows = installStubWorkflows();
     await onSessionEnd({ sessionId: "s1", env, workflows, lastEventIndex: 41 });
     await onSessionEnd({ sessionId: "s1", clientId: "spk-1", env, workflows, lastEventIndex: -1 });
-    expect(start).not.toHaveBeenCalled();
+    expect(workflows.start).not.toHaveBeenCalled();
   });
 });

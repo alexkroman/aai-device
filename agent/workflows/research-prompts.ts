@@ -1,8 +1,6 @@
-// The deep-research prompts. From the SDK's research-handoff-agent template
-// (workflows/prompts.ts), which adapted them from LangChain's open_deep_research (MIT,
-// https://github.com/langchain-ai/open_deep_research, src/open_deep_research/prompts.py):
-// every stage has an explicit stop rule and budget, since a researcher told "search until
-// you know enough" either stops at the first plausible page or never stops.
+// The deep-research prompts this speaker overrides; deepResearchWorkflow keeps the SDK's
+// defaults (DEFAULT_DEEP_RESEARCH_PROMPTS, adapted from LangChain's open_deep_research)
+// for the plan, the researcher and the gap pass.
 //
 // Changed for a speaker: the request was spoken to a device across the room, the answer
 // is said out loud on it (and has to fit a notice, under a minute of audio), and the
@@ -16,51 +14,6 @@ export const BRIEF_SYSTEM = [
   "reasonable reading of the request and say what would make the answer good.",
   "`brief` is two or three sentences naming what is being researched and for whom.",
   "`criteria` is two to four things a complete answer must contain.",
-].join(" ");
-
-/** Decompose the brief into research units: the fan-out's width. */
-export const PLAN_SYSTEM = [
-  "You are a research supervisor. Break a research brief into independent angles,",
-  "each of which one researcher can investigate on its own.",
-  "Bias towards FEWER angles: use one when the brief is a single question, and",
-  "only add angles where a genuinely separate line of enquiry exists. Two",
-  "researchers covering the same ground is the failure to avoid.",
-  "`angles` lists them, each one short noun phrase, specific enough to search for.",
-].join(" ");
-
-export const RESEARCH_SYSTEM = [
-  "You are a researcher working on one angle of a research brief.",
-  "Search the web, read the pages worth reading, and cite what you use.",
-  "",
-  "Rules for how hard to look:",
-  "- A simple, factual angle deserves 2 to 3 searches. A comparative or",
-  "  contested one deserves up to the budget you are given.",
-  "- STOP as soon as one of these is true: you can answer the angle thoroughly;",
-  "  you have three or more relevant sources agreeing; the last two searches",
-  "  returned much the same thing.",
-  "- Prefer READING a promising result over running another search. A page you",
-  "  have opened is worth more than a fourth list of titles.",
-  "- Call `cite` for each source you actually relied on, as you go rather than",
-  "  at the end. A source you did not read is not a source.",
-].join("\n");
-
-/** What a researcher's final message has to be: SubagentDef.expectedOutput. */
-export const RESEARCH_OUTPUT = [
-  "Everything you found that bears on the angle, written out cleanly. Repeat",
-  "the relevant text rather than summarizing it away: a later stage does the",
-  "summarizing and can only work with what you keep.",
-  "Mark each claim with the source you took it from. If you could not establish",
-  "something, say so rather than guessing, including when the budget ran out.",
-].join(" ");
-
-/** The supervisor's second look: what is still unanswered. */
-export const GAPS_SYSTEM = [
-  "You are a research supervisor reviewing what came back from the first wave.",
-  "Name only the angles that are still genuinely unanswered against the brief's",
-  "criteria: a gap is something a reader would notice, not something that could",
-  "merely be said at greater length.",
-  "`angles` is an EMPTY list when the brief is covered; a second wave costs",
-  "minutes and it should buy something.",
 ].join(" ");
 
 /** The report, to be read on a phone as a text message. */

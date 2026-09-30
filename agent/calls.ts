@@ -1,3 +1,4 @@
+import type { EnvContext } from "@alexkroman1/aai/step";
 import { rest } from "./supabase.ts";
 
 // Phone calls placed for the household. Two steps, both needed, in the speaker's own
@@ -9,8 +10,6 @@ import { rest } from "./supabase.ts";
 // Calling a person with an AI voice is regulated (the FCC counts one as "artificial" for
 // the TCPA): the calling agent says it is an AI assistant first, never gives payment or
 // ID details, and Twilio hangs up after CALL_TIME_LIMIT_S whatever happens.
-
-type Ctx = { env: Readonly<Partial<Record<string, string>>>; signal?: AbortSignal };
 
 /** A draft must be approved within this long, in the session that made it. */
 export const DRAFT_TTL_MS = 10 * 60 * 1000;
@@ -42,7 +41,7 @@ export type CallRow = {
 const enc = encodeURIComponent;
 
 export async function draftCall(
-  ctx: Ctx,
+  ctx: EnvContext,
   draft: Omit<
     CallRow,
     "id" | "status" | "twilio_sid" | "outcome" | "error" | "transcript" | "created_at"
@@ -53,13 +52,13 @@ export async function draftCall(
   return id;
 }
 
-export async function readCall(ctx: Ctx, id: string): Promise<CallRow | undefined> {
+export async function readCall(ctx: EnvContext, id: string): Promise<CallRow | undefined> {
   const rows = await rest<CallRow[]>(ctx, `/calls?id=eq.${enc(id)}&select=*`);
   return rows[0];
 }
 
 export async function updateCall(
-  ctx: Ctx,
+  ctx: EnvContext,
   id: string,
   fields: Partial<CallRow> & Record<string, unknown>,
 ) {
@@ -75,7 +74,7 @@ export type ApproveResult =
  * was made in THIS session and recently, and the speaker is under its daily cap.
  */
 export async function approveCall(
-  ctx: Ctx,
+  ctx: EnvContext,
   id: string,
   session: { sessionId: string; clientId: string },
   now = Date.now(),
@@ -103,7 +102,7 @@ export async function approveCall(
 }
 
 /** The calling agent's public URL, published by `make caller` (it changes every run). */
-export async function callerUrl(ctx: Ctx): Promise<string | undefined> {
+export async function callerUrl(ctx: EnvContext): Promise<string | undefined> {
   const rows = await rest<{ value: string }[]>(ctx, "/settings?key=eq.caller_url&select=value");
   return rows[0]?.value;
 }

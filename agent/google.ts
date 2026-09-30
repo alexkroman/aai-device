@@ -1,5 +1,6 @@
 import { requireEnv, type ToolContext, type ToolFailure, toolFailure } from "@alexkroman1/aai";
-import { isToolFailure } from "@alexkroman1/aai/utils";
+import type { EnvContext } from "@alexkroman1/aai/step";
+import { HttpError, isRecord, isToolFailure, jsonClient } from "@alexkroman1/aai/utils";
 import { z } from "zod";
 import { missingField, readProfile } from "./profile.ts";
 
@@ -29,31 +30,44 @@ export const locationField = z
 
 export type Located = { key: string; latitude: number; longitude: number; place: string };
 
+/** Google's own message in a refused body, first sentence only: the model reads it aloud. */
+function googleSentence(body: unknown): string | undefined {
+  return isRecord(body) && isRecord(body.error) && typeof body.error.message === "string"
+    ? body.error.message.split(". ")[0]
+    : undefined;
+}
+
 /** Google's own message, first sentence only: the model reads it aloud. */
 export async function googleError(res: Response): Promise<string> {
-  const body = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
-  return body.error?.message?.split(". ")[0] ?? `HTTP ${res.status}`;
+  return googleSentence(await res.json().catch(() => ({}))) ?? `HTTP ${res.status}`;
 }
+
+const places = jsonClient({
+  label: "Google Places",
+  baseUrl: "https://places.googleapis.com/v1",
+  headers: (env) => ({ "x-goog-api-key": requireEnv({ env }, "GOOGLE_PLACES_API_KEY") }),
+  errorMessage: googleSentence,
+});
 
 export type Geocoded = { latitude: number; longitude: number; formattedAddress: string };
 
 /** The best match for `query`, or a failure the model can read out. */
-export async function geocode(
-  query: string,
-  ctx: Pick<ToolContext, "env"> & { signal?: AbortSignal },
-): Promise<Geocoded | ToolFailure> {
-  const res = await fetch("https://places.googleapis.com/v1/places:searchText", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-goog-api-key": requireEnv(ctx, "GOOGLE_PLACES_API_KEY"),
-      "x-goog-fieldmask": "places.location,places.formattedAddress",
-    },
-    body: JSON.stringify({ textQuery: query, pageSize: 1 }),
-    signal: ctx.signal,
-  });
-  if (!res.ok) return toolFailure(`Could not look up the place: ${await googleError(res)}`);
-  const found = LocateResponse.parse(await res.json()).places?.[0];
+export async function geocode(query: string, ctx: EnvContext): Promise<Geocoded | ToolFailure> {
+  let body: unknown;
+  try {
+    body = await places(
+      ctx,
+      "POST",
+      "/places:searchText",
+      { textQuery: query, pageSize: 1 },
+      { headers: { "x-goog-fieldmask": "places.location,places.formattedAddress" } },
+    );
+  } catch (err) {
+    if (!(err instanceof HttpError)) throw err;
+    const why = googleSentence(err.body) ?? `HTTP ${err.status}`;
+    return toolFailure(`Could not look up the place: ${why}`);
+  }
+  const found = LocateResponse.parse(body).places?.[0];
   if (!found) return toolFailure(`Could not find a place called "${query}".`);
   return { ...found.location, formattedAddress: found.formattedAddress ?? query };
 }

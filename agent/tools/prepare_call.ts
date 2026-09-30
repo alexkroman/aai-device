@@ -1,4 +1,5 @@
-import { sessionClientId, tool, toolFailure } from "@alexkroman1/aai";
+import { requireSessionClient, tool, toolFailure } from "@alexkroman1/aai";
+import { isToolFailure } from "@alexkroman1/aai/utils";
 import { z } from "zod";
 import { draftCall } from "../calls.ts";
 import { normalizePhone, readProfile, spokenPhone } from "../profile.ts";
@@ -37,8 +38,11 @@ export default tool({
       .describe("Anything they said not to do or share, beyond the usual rules"),
   }),
   async execute({ callee, phone, goal, may_agree, must_not }, ctx) {
-    const clientId = sessionClientId(ctx);
-    if (!clientId) return toolFailure("Calls can only be placed from a speaker or the page.");
+    const clientId = requireSessionClient(
+      ctx,
+      "Calls can only be placed from a speaker or the page.",
+    );
+    if (isToolFailure(clientId)) return clientId;
     const to = normalizePhone(phone);
     if (!to)
       return toolFailure("That isn't a phone number I can call. Ask for it with the area code.");

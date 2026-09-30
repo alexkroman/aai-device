@@ -1,8 +1,10 @@
-import { type ReactNode, useCallback, useEffect, useState } from "react";
+import { phoneE164, useRoute, useStoredValue } from "@alexkroman1/aai-ui";
+import { type ReactNode, useEffect, useState } from "react";
 import { MIN_APP_SEARCH } from "../app-search.ts";
 import { VERBATIM_WINDOW_MS } from "../history-window.ts";
 import { api } from "./api.ts";
-import { browserId, linkedSpeaker, setLinkedSpeaker } from "./client-id.ts";
+import { linked } from "./client-id.ts";
+import { PHONE_COUNTRY, phone } from "./settings.ts";
 
 // Everything about the speaker that isn't the conversation: the household profile, the
 // runs going on for it, what it remembers, and the context each session started with,
@@ -23,6 +25,8 @@ export function Sidebar(props: {
     <div className="w-full flex flex-col gap-3">
       <Panel title="Household" open>
         <Profile />
+        {/* Outside Profile: it is this browser's, so it shows even when /profile can't load. */}
+        <TextMeAt />
       </Panel>
       <Panel title="Link to a speaker">
         <Link endSession={props.endSession} />
@@ -55,27 +59,6 @@ function Panel({ title, open, children }: { title: string; open?: boolean; child
   );
 }
 
-/** Load `path`, and again whenever `reload` is called or every `pollMs`. */
-function useApi<T>(path: string, pollMs?: number) {
-  const [data, setData] = useState<T>();
-  const [error, setError] = useState<string>();
-  const reload = useCallback(() => {
-    api<T>("GET", path)
-      .then((d) => {
-        setData(d);
-        setError(undefined);
-      })
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
-  }, [path]);
-  useEffect(() => {
-    reload();
-    if (!pollMs) return;
-    const id = setInterval(reload, pollMs);
-    return () => clearInterval(id);
-  }, [reload, pollMs]);
-  return { data, error, reload };
-}
-
 function Failure({ error }: { error: string | undefined }) {
   return error ? <p className="text-xs text-red-400">{error}</p> : null;
 }
@@ -85,7 +68,7 @@ function Failure({ error }: { error: string | undefined }) {
 type ProfileData = { name: string; home_address: string; phone_last4: string; email: string };
 
 function Profile() {
-  const { data, error, reload } = useApi<ProfileData>("/profile");
+  const { data, error, reload } = useRoute<ProfileData>("/profile");
   const [saving, setSaving] = useState<string>();
   const [failed, setFailed] = useState<string>();
   const save = (field: "name" | "home_address" | "email", value: string) => {
@@ -123,13 +106,35 @@ function Profile() {
         busy={saving === "email"}
         onSave={(v) => save("email", v)}
       />
-      <p className="text-xs opacity-60">
-        {data.phone_last4
-          ? `Texts go to the number ending in ${data.phone_last4}. Say a new one to change it.`
-          : "No phone saved: tell the speaker your number and read back the code it texts."}
-      </p>
       <Failure error={failed} />
     </>
+  );
+}
+
+/**
+ * Where this browser's texts go (text_me, research, app jobs): kept in this browser and
+ * reported on every connect (settings.ts, client.tsx), not in the household profile.
+ */
+function TextMeAt() {
+  const [value, setValue] = useStoredValue(phone);
+  const invalid = value.trim() !== "" && phoneE164(value, PHONE_COUNTRY) === undefined;
+  return (
+    <label className="flex flex-col gap-1 text-xs opacity-80">
+      Text me at (with the country code, e.g. +1)
+      <input
+        className={input}
+        type="tel"
+        value={value}
+        placeholder="e.g. +1 555 555 0123"
+        aria-invalid={invalid}
+        onChange={(e) => setValue(e.target.value)}
+      />
+      {invalid && (
+        <span className="text-red-400">
+          Not a number texts can go to: add the country code, e.g. +1
+        </span>
+      )}
+    </label>
   );
 }
 
@@ -167,12 +172,12 @@ function Field(props: {
  */
 function switchTo(speaker: string | undefined, endSession: () => void) {
   endSession();
-  setLinkedSpeaker(speaker);
+  linked.set(speaker);
   location.reload();
 }
 
 function Link({ endSession }: { endSession: () => void }) {
-  const linked = linkedSpeaker();
+  const speaker = linked.linked();
   const [code, setCode] = useState<{ code: string; expiresAt: number }>();
   const [error, setError] = useState<string>();
 
@@ -194,11 +199,11 @@ function Link({ endSession }: { endSession: () => void }) {
     return () => clearInterval(id);
   }, [code, endSession]);
 
-  if (linked) {
+  if (speaker) {
     return (
       <>
         <p className="text-xs opacity-80">
-          This page is speaker <span className="font-mono">{linked}</span>: what's said to it shows
+          This page is speaker <span className="font-mono">{speaker}</span>: what's said to it shows
           up here, and typing here continues its conversation.
         </p>
         <button type="button" className={small} onClick={() => switchTo(undefined, endSession)}>
@@ -232,7 +237,7 @@ function Link({ endSession }: { endSession: () => void }) {
             .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
         }
       >
-        Get a code (this browser: {browserId()})
+        Get a code (this browser: {linked.own()})
       </button>
       <Failure error={error} />
     </>
@@ -249,7 +254,7 @@ type AppRow = { slug: string; name: string; logo: string; description: string; c
  * connection shows up without a reload.
  */
 function Apps() {
-  const connected = useApi<{ apps: AppRow[] }>("/apps", 5000);
+  const connected = useRoute<{ apps: AppRow[] }>("/apps", { pollMs: 5000 });
   const [search, setSearch] = useState("");
   const [found, setFound] = useState<AppRow[]>();
   const [busy, setBusy] = useState<string>();
@@ -367,7 +372,7 @@ type WatchRow = { id: string; app: string; instruction: string; createdAt: strin
 
 /** What the speaker was asked to tell them about ("tell me when Sam emails"), to stop. */
 function Watches() {
-  const { data, reload } = useApi<{ watches: WatchRow[] }>("/watches", 15_000);
+  const { data, reload } = useRoute<{ watches: WatchRow[] }>("/watches", { pollMs: 15_000 });
   if (!data?.watches.length) return null;
   return (
     <section className="flex flex-col gap-1">
@@ -404,7 +409,7 @@ type Task = {
 };
 
 function Tasks() {
-  const { data, error, reload } = useApi<{ tasks: Task[] }>("/tasks", 5000);
+  const { data, error, reload } = useRoute<{ tasks: Task[] }>("/tasks", { pollMs: 5000 });
   if (!data) return <Failure error={error} />;
   if (data.tasks.length === 0) return <p className="text-xs opacity-60">Nothing running.</p>;
   return (
@@ -447,7 +452,7 @@ type SessionRow = { sessionId: string; startedAt: number; preview: string; turns
 
 /** Every conversation this speaker has had (the server's, not this browser's), to continue. */
 function Sessions(props: { current: string | undefined; onContinue: (sessionId: string) => void }) {
-  const { data, error } = useApi<{ sessions: SessionRow[] }>("/sessions", 15_000);
+  const { data, error } = useRoute<{ sessions: SessionRow[] }>("/sessions", { pollMs: 15_000 });
   if (!data) return <Failure error={error} />;
   if (data.sessions.length === 0)
     return <p className="text-xs opacity-60">No conversations yet.</p>;
@@ -485,7 +490,9 @@ type MemoryRow = { id: string; memory: string; updated_at: string | null };
 
 function Memories() {
   // Polled: memorize adds memories after every conversation, while this page is open.
-  const { data, error, reload } = useApi<{ memories: MemoryRow[] }>("/memories", 15_000);
+  const { data, error, reload } = useRoute<{ memories: MemoryRow[] }>("/memories", {
+    pollMs: 15_000,
+  });
   const [draft, setDraft] = useState("");
   const [failed, setFailed] = useState<string>();
   const run = (p: Promise<unknown>) =>
@@ -584,7 +591,7 @@ type ContextData = {
 };
 
 function Context() {
-  const { data, error, reload } = useApi<ContextData>("/context", 15_000);
+  const { data, error, reload } = useRoute<ContextData>("/context", { pollMs: 15_000 });
   const [failed, setFailed] = useState<string>();
   const run = (p: Promise<unknown>) =>
     p

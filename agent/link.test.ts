@@ -1,4 +1,5 @@
-import { afterEach, vi } from "vitest";
+import { installFetchRoutes } from "@alexkroman1/aai/testing/vitest";
+import { afterEach } from "vitest";
 import {
   claimLinkCode,
   createLinkCode,
@@ -43,33 +44,32 @@ function matches(row: Row, params: URLSearchParams): boolean {
 }
 
 function fakeSupabase() {
-  vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
-    const u = new URL(url);
-    const where = u.searchParams;
-    const body = init.body ? JSON.parse(String(init.body)) : undefined;
-    let out: unknown = [];
-    if (init.method === "POST") {
-      rows.push({
-        id: nextId++,
-        speaker_client: null,
-        attempts: 0,
-        created_at: new Date().toISOString(),
-        ...body,
-      });
-      out = undefined;
-    } else if (init.method === "DELETE") {
-      rows = rows.filter((r) => !matches(r, where));
-    } else if (init.method === "PATCH") {
-      for (const r of rows) if (matches(r, where)) Object.assign(r, body);
-    } else {
-      out = rows.filter((r) => matches(r, where)).sort((a, b) => b.id - a.id);
-    }
-    return new Response(out === undefined ? "" : JSON.stringify(out), { status: 200 });
+  installFetchRoutes({
+    "supabase.test": ({ method, searchParams: where, json: body }) => {
+      if (method === "POST") {
+        rows.push({
+          id: nextId++,
+          speaker_client: null,
+          attempts: 0,
+          created_at: new Date().toISOString(),
+          ...(body as Partial<Row>),
+        } as Row);
+        return { status: 201 };
+      }
+      if (method === "DELETE") {
+        rows = rows.filter((r) => !matches(r, where));
+        return { body: [] };
+      }
+      if (method === "PATCH") {
+        for (const r of rows) if (matches(r, where)) Object.assign(r, body);
+        return { body: [] };
+      }
+      return { body: rows.filter((r) => matches(r, where)).sort((a, b) => b.id - a.id) };
+    },
   });
 }
 
 afterEach(() => {
-  vi.unstubAllGlobals();
   rows = [];
 });
 

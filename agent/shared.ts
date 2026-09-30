@@ -1,12 +1,12 @@
 import { workflow } from "@alexkroman1/aai";
 import { z } from "zod";
 import { appEventFlow } from "./workflows/app-event.ts";
-import { appJobFlow } from "./workflows/app-job.ts";
+import { appJobFailure, appJobFlow } from "./workflows/app-job.ts";
 import { callFlow } from "./workflows/call.ts";
 import { emailFlow } from "./workflows/email.ts";
 import { memorizeFlow } from "./workflows/memorize.ts";
 import { remindFlow } from "./workflows/remind.ts";
-import { researchFlow } from "./workflows/research.ts";
+import { researchWorkflow } from "./workflows/research.ts";
 
 // The workflows' declarations, in a module both agent.ts and the tools import:
 // ctx.workflows.start(remind, …) takes the definition, and a tool cannot import agent.ts
@@ -22,16 +22,8 @@ export const remind = workflow({
   run: remindFlow,
 });
 
-export const research = workflow({
-  description: "Research a topic in depth, say it on the speaker, and text it if asked",
-  input: z.object({
-    topic: z.string().describe("What to research, as they asked it"),
-    clientId: z.string().optional().describe("The speaker to announce it on, if any"),
-    phone: z.string().optional().describe("The number the client reported; else SMS_TO_PHONE"),
-    text: z.boolean().optional().describe("Whether they asked for the report by text"),
-  }),
-  run: researchFlow,
-});
+/** deepResearchWorkflow's definition, declared with its input and failure handling. */
+export const research = researchWorkflow;
 
 export const call = workflow({
   description: "Dial a call the household approved, wait for it to end, and say how it went",
@@ -63,6 +55,8 @@ export const appJob = workflow({
     text: z.boolean().optional().describe("Whether they asked for the answer by text"),
   }),
   run: appJobFlow,
+  // Said on the speaker when the run fails for good, or a failed job is silence.
+  onFailure: appJobFailure,
 });
 
 export const emailResult = workflow({

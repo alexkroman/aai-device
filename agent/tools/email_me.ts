@@ -1,4 +1,5 @@
-import { sessionClientId, tool, toolFailure } from "@alexkroman1/aai";
+import { requireSessionClient, tool } from "@alexkroman1/aai";
+import { isToolFailure } from "@alexkroman1/aai/utils";
 import { z } from "zod";
 import { MAX_EMAIL_CHARS } from "../email.ts";
 import { emailResult } from "../shared.ts";
@@ -24,8 +25,8 @@ export default tool({
       .describe("The full version, written to be read: plain text, links as full URLs"),
   }),
   async execute({ subject, body }, ctx) {
-    const clientId = sessionClientId(ctx);
-    if (!clientId) return toolFailure("Email works on a speaker or its linked page only.");
+    const clientId = requireSessionClient(ctx, "Email works on a speaker or its linked page only.");
+    if (isToolFailure(clientId)) return clientId;
     // Keyed by the speaker, so its Running panel shows it (GET /api/tasks).
     await ctx.workflows.start(
       emailResult,

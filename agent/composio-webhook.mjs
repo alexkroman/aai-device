@@ -13,11 +13,18 @@
 // instead, which signs with COMPOSIO_WEBHOOK_SECRET when it is set.
 //
 // Not a tool (a .mjs, not in tools/), so the agent bundle never sees it.
-import { readFileSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { parseEnv } from "node:util";
 
 const API = "https://backend.composio.dev/api/v3.1";
-const envPath = fileURLToPath(new URL("./.env", import.meta.url));
+const agentDir = fileURLToPath(new URL(".", import.meta.url));
+const envPath = `${agentDir}.env`;
+// The linked SDK's CLI, as `pnpm exec aai` would resolve it.
+const aaiBin = fileURLToPath(
+  new URL("./node_modules/@alexkroman1/aai-cli/bin.mjs", import.meta.url),
+);
 
 const base = process.argv[2]?.replace(/\/+$/, "");
 if (!base || !/^https:\/\//.test(base)) {
@@ -26,9 +33,8 @@ if (!base || !/^https:\/\//.test(base)) {
 }
 const webhookUrl = `${base}/api/composio/webhook`;
 
-let env = readFileSync(envPath, "utf8");
-const key =
-  process.env.COMPOSIO_API_KEY?.trim() || env.match(/^COMPOSIO_API_KEY=(.*)$/m)?.[1]?.trim();
+const env = existsSync(envPath) ? parseEnv(readFileSync(envPath, "utf8")) : {};
+const key = process.env.COMPOSIO_API_KEY?.trim() || env.COMPOSIO_API_KEY?.trim();
 if (!key) {
   console.error("COMPOSIO_API_KEY is not set in agent/.env");
   process.exit(1);
@@ -55,10 +61,10 @@ const sub = items[0]
   ? await composio("PATCH", `/webhook_subscriptions/${encodeURIComponent(items[0].id)}`, want)
   : await composio("POST", "/webhook_subscriptions", want);
 
-const line = `COMPOSIO_WEBHOOK_SECRET=${sub.secret}`;
-env = /^COMPOSIO_WEBHOOK_SECRET=.*$/m.test(env)
-  ? env.replace(/^COMPOSIO_WEBHOOK_SECRET=.*$/m, line)
-  : `${env.trimEnd()}\n${line}\n`;
-writeFileSync(envPath, env);
+// On stdin, never argv, so the secret stays out of the process list.
+execFileSync(process.execPath, [aaiBin, "secret", "put", "--local", "COMPOSIO_WEBHOOK_SECRET"], {
+  cwd: agentDir,
+  input: sub.secret,
+  stdio: ["pipe", "ignore", "inherit"],
+});
 console.log(`Composio delivers trigger events to ${webhookUrl}; its secret is in agent/.env.`);
-console.log("Restart `make agent` so the webhook route reads it.");

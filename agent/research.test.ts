@@ -1,44 +1,25 @@
+import { DEFAULT_CLIENT_DELIVERY_ATTEMPTS } from "@alexkroman1/aai/step";
+import { createToolContext, createWorkflowContext, runTool } from "@alexkroman1/aai/testing";
 import {
-  createStubWorkflows,
-  createToolContext,
-  runTool,
-  stubClientInbox,
-  stubSpeech,
-} from "@alexkroman1/aai/testing";
-import { installStubStepDelegate, installStubStepFetch } from "@alexkroman1/aai/testing/vitest";
+  installStubClientInbox,
+  installStubGateway,
+  installStubSpeech,
+  installStubStepFetch,
+  installStubWorkflows,
+} from "@alexkroman1/aai/testing/vitest";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { research } from "./shared.ts";
 import deepResearch from "./tools/deep_research.ts";
-import { NOTICE_SAMPLE_RATE } from "./workflows/remind.ts";
-import { announce, investigate, textReport, withSources } from "./workflows/research.ts";
-import { allSources, citedSources, findingsText, type Note } from "./workflows/research-notes.ts";
+import { announce, researchWorkflow, withSources } from "./workflows/research.ts";
+import { BRIEF_SYSTEM } from "./workflows/research-prompts.ts";
+import { TEXT_STEP, textReport } from "./workflows/text.ts";
+
+// The research stages themselves (brief, angles, researchers, gaps, report) are the SDK's
+// deepResearchWorkflow and tested there; this pins the speaker's side of it: its prompts,
+// how it delivers, and what it says when it fails.
 
 const a = { title: "Heat pumps, explained", url: "https://example.com/a" };
 const b = { title: "Cold-climate models", url: "https://example.com/b" };
-const c = { title: "Rebates", url: "https://example.com/c" };
-const notes: Note[] = [
-  { angle: "how they work", findings: "They move heat.", sources: [a, b] },
-  { angle: "cost", findings: "Rebates help.", sources: [b, c] },
-];
-
-describe("source numbering", () => {
-  test("every source is numbered once across the notes, first seen first", () => {
-    expect(allSources(notes)).toEqual([a, b, c]);
-    const text = findingsText(notes, allSources(notes));
-    expect(text).toContain("## how they work\nThey move heat.\nSources used here: [1] [2]");
-    expect(text).toContain("## cost\nRebates help.\nSources used here: [2] [3]");
-    expect(text).toContain("[3] Rebates (https://example.com/c)");
-  });
-
-  test("a report's citations map back to OUR urls, only the ones it used", () => {
-    expect(citedSources("Cheap to run [3], and quiet [1][3].", [a, b, c])).toEqual([
-      "[1] https://example.com/a",
-      "[3] https://example.com/c",
-    ]);
-    // A number with no source behind it is dropped, not invented.
-    expect(citedSources("Something [9].", [a])).toEqual([]);
-  });
-});
 
 describe("withSources", () => {
   test("titles the text and appends the cited urls", () => {
@@ -62,15 +43,11 @@ describe("withSources", () => {
 
 describe("deep_research", () => {
   test("starts a run that only says the results on this session's speaker", async () => {
-    const start = vi.fn(async () => "wrun_1");
-    const ctx = createToolContext({
-      clientId: "kitchen",
-      clientPhone: "+15555550123",
-      workflows: createStubWorkflows({ start }),
-    });
+    const workflows = installStubWorkflows({ runId: "wrun_1" });
+    const ctx = createToolContext({ clientId: "kitchen", clientPhone: "+15555550123", workflows });
     const result = await runTool(deepResearch, { topic: "heat pumps for an old house" }, ctx);
     expect(result).toEqual({ started: true, delivery: "said on the speaker" });
-    expect(start).toHaveBeenCalledWith(
+    expect(workflows.start).toHaveBeenCalledWith(
       research,
       {
         topic: "heat pumps for an old house",
@@ -83,16 +60,13 @@ describe("deep_research", () => {
   });
 
   test("texts the report too when they asked for a text", async () => {
-    const start = vi.fn(async () => "wrun_1");
-    const ctx = createToolContext({
-      clientId: "kitchen",
-      workflows: createStubWorkflows({ start }),
-    });
+    const workflows = installStubWorkflows({ runId: "wrun_1" });
+    const ctx = createToolContext({ clientId: "kitchen", workflows });
     expect(await runTool(deepResearch, { topic: "heat pumps", text: true }, ctx)).toEqual({
       started: true,
       delivery: "said on the speaker, and texted",
     });
-    expect(start).toHaveBeenCalledWith(
+    expect(workflows.start).toHaveBeenCalledWith(
       research,
       expect.objectContaining({ text: true }),
       expect.anything(),
@@ -100,44 +74,88 @@ describe("deep_research", () => {
   });
 
   test("from a browser tab it texts only when asked, and otherwise starts nothing", async () => {
-    const start = vi.fn(async () => "w");
-    const ctx = createToolContext({ workflows: createStubWorkflows({ start }) });
+    const workflows = installStubWorkflows();
+    const ctx = createToolContext({ workflows });
     expect(await runTool(deepResearch, { topic: "heat pumps", text: true }, ctx)).toEqual({
       started: true,
       delivery: "texted",
     });
-    start.mockClear();
+    vi.mocked(workflows.start).mockClear();
     const refused = await runTool(deepResearch, { topic: "heat pumps" }, ctx);
     expect(JSON.stringify(refused)).toContain("Ask whether to text them");
-    expect(start).not.toHaveBeenCalled();
+    expect(workflows.start).not.toHaveBeenCalled();
   });
 });
 
 const brief = { brief: "Heat pumps for an old house.", criteria: ["cost"] };
+/** The SDK's stages, answered by name so the body reaches the speaker's own steps. */
+const stages = {
+  writeBrief: brief,
+  planAngles: ["cost"],
+  investigate: { angle: "cost", findings: "Rebates help [1].", sources: [a] },
+  findGaps: [],
+  writeReport: { report: "Rebates help [1].", summary: "Rebates make them affordable." },
+};
 
-describe("investigate", () => {
-  test("hands the angle to a researcher on brave_search, with the brief as context", async () => {
-    const desk = installStubStepDelegate({ routes: { researcher: "They work [1]." } });
-    const note = await investigate(brief, "cold climates");
-    expect(note.findings).toBe("They work [1].");
-    expect(desk.calls[0]?.task).toBe("cold climates");
-    expect(desk.calls[0]?.options.context).toContain("Heat pumps for an old house.");
-    expect(desk.calls[0]?.subagent.builtinTools).toEqual(["brave_search", "visit_webpage"]);
+describe("the research workflow", () => {
+  afterEach(() => vi.unstubAllEnvs());
+  const input = { topic: "heat pumps", clientId: "kitchen" };
+
+  test("says the summary on the speaker, and texts only when asked", async () => {
+    const ctx = createWorkflowContext({ runSteps: false, results: stages });
+    expect(await researchWorkflow.run(input, ctx)).toEqual({
+      topic: "heat pumps",
+      summary: "Rebates make them affordable.",
+      sources: 1,
+      texted: { sent: false },
+      announced: true,
+    });
+    expect(ctx.steps.slice(-1)).toEqual([
+      { name: "announce", maxAttempts: DEFAULT_CLIENT_DELIVERY_ATTEMPTS },
+    ]);
+    expect(ctx.steps.map((s) => s.name)).not.toContain("text");
   });
 
-  test("a researcher that never cited falls back to the pages it opened", async () => {
-    installStubStepDelegate({
-      routes: {
-        researcher: {
-          text: "found",
-          toolCalls: [{ name: "visit_webpage", input: { url: "https://example.com/a" } }],
-        },
-      },
+  test("a text they asked for is its own few-attempt step, before the announcement", async () => {
+    const ctx = createWorkflowContext({
+      runSteps: false,
+      results: { ...stages, text: { sent: true } },
     });
-    const note = await investigate(brief, "cost");
-    expect(note.sources).toEqual([
-      { title: "https://example.com/a", url: "https://example.com/a" },
+    const out = await researchWorkflow.run({ ...input, text: true }, ctx);
+    expect(out).toMatchObject({ texted: { sent: true } });
+    expect(ctx.steps.slice(-2)).toEqual([
+      { name: "text", maxAttempts: TEXT_STEP.maxAttempts },
+      { name: "announce", maxAttempts: DEFAULT_CLIENT_DELIVERY_ATTEMPTS },
     ]);
+  });
+
+  test("a failure is said on the speaker, then still fails the run", async () => {
+    // No angles planned: the fan-out has nothing to map, and the pass throws.
+    const ctx = createWorkflowContext({ runSteps: false, results: { writeBrief: brief } });
+    await expect(researchWorkflow.run(input, ctx)).rejects.toThrow();
+    expect(ctx.steps.at(-1)).toEqual({
+      name: "announceFailure",
+      maxAttempts: DEFAULT_CLIENT_DELIVERY_ATTEMPTS,
+    });
+  });
+
+  test("with no speaker to say it on, a failure says nothing", async () => {
+    const ctx = createWorkflowContext({ runSteps: false, results: { writeBrief: brief } });
+    await expect(researchWorkflow.run({ topic: "heat pumps" }, ctx)).rejects.toThrow();
+    expect(ctx.steps.map((s) => s.name)).not.toContain("announceFailure");
+  });
+
+  test("the brief is written with the speaker's prompt", async () => {
+    vi.stubEnv("ASSEMBLYAI_API_KEY", "test-key");
+    const gateway = installStubGateway(JSON.stringify(brief));
+    const { writeBrief: _, ...rest } = stages;
+    const ctx = createWorkflowContext({ results: { ...rest, announce: undefined } });
+    await researchWorkflow.run(input, ctx);
+    expect(gateway[0]?.system).toContain(BRIEF_SYSTEM);
+  });
+
+  test("the declared workflow is this one", () => {
+    expect(research).toBe(researchWorkflow);
   });
 });
 
@@ -207,29 +225,24 @@ describe("textReport", () => {
 });
 
 describe("announce", () => {
-  afterEach(() => vi.unstubAllEnvs());
-
-  test("says the summary on the speaker at the board's rate, under the run id", async () => {
-    vi.stubEnv("ASSEMBLYAI_API_KEY", "test-key");
-    const speech = stubSpeech({ pcmBytes: 3200 });
-    const inbox = stubClientInbox();
-    try {
-      await announce("wrun_9", { topic: "heat pumps", clientId: "kitchen" }, "They work.", {
-        sent: true,
-      });
-      expect(speech.calls).toMatchObject([
-        {
-          text: "Your research on heat pumps is ready. They work. I've texted you the full report.",
-          sampleRate: NOTICE_SAMPLE_RATE,
-        },
-      ]);
-      expect(inbox.calls[0]).toMatchObject({
+  test("says the summary on the speaker under the run id, and whether it was texted", async () => {
+    installStubSpeech({ pcmBytes: 3200 });
+    const inbox = installStubClientInbox();
+    await announce("wrun_9", { topic: "heat pumps", clientId: "kitchen" }, "They work.", {
+      sent: true,
+    });
+    expect(inbox.calls).toMatchObject([
+      {
         clientId: "kitchen",
-        notice: { id: "wrun_9", event: "research", data: { topic: "heat pumps" } },
-      });
-    } finally {
-      speech.restore();
-      inbox.restore();
-    }
+        notice: {
+          id: "wrun_9",
+          event: "research",
+          data: {
+            topic: "heat pumps",
+            said: "Your research on heat pumps is ready. They work. I've texted you the full report.",
+          },
+        },
+      },
+    ]);
   });
 });

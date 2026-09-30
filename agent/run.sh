@@ -18,6 +18,9 @@ set -euo pipefail
 cd "$(dirname "$0")"
 PORT="${PORT:-3000}"
 SDK="${AAI_SDK:-$HOME/Code/aai/agent-builtin-api-tools}"
+# The linked SDK's CLI (the global `aai` is an older release); `make agent` sets
+# AAI_DEV_SOURCE=1 so it runs, and builds the agent against, the SDK's src/.
+aai() { node "$SDK/packages/aai-cli/bin.mjs" "$@"; }
 COMPOSIO="${COMPOSIO:-$(command -v composio || echo "$HOME/.local/bin/composio")}"
 LISTEN_LOG=.composio-listen.log
 
@@ -43,12 +46,8 @@ start_listener() {
   fi
   resolve_project || return 0
   # A shell export fills .env's declared name, so `aai dev` and the CLI get the same one.
-  if [ -z "${COMPOSIO_WEBHOOK_SECRET:-$(dotenv COMPOSIO_WEBHOOK_SECRET)}" ]; then
-    COMPOSIO_WEBHOOK_SECRET="$(openssl rand -hex 32)"
-  else
-    COMPOSIO_WEBHOOK_SECRET="${COMPOSIO_WEBHOOK_SECRET:-$(dotenv COMPOSIO_WEBHOOK_SECRET)}"
-  fi
-  export COMPOSIO_WEBHOOK_SECRET
+  COMPOSIO_WEBHOOK_SECRET="${COMPOSIO_WEBHOOK_SECRET:-$(dotenv COMPOSIO_WEBHOOK_SECRET)}"
+  export COMPOSIO_WEBHOOK_SECRET="${COMPOSIO_WEBHOOK_SECRET:-$(openssl rand -hex 32)}"
   local forward="http://127.0.0.1:$PORT/api/composio/webhook"
   if [ -n "$listen_project" ]; then
     COMPOSIO_ORG_ID="$listen_org" COMPOSIO_PROJECT_ID="$listen_project" \
@@ -119,4 +118,4 @@ advertise() {
 
 start_listener
 advertise
-AAI_DEV_HOST=0.0.0.0 node "$SDK/packages/aai-cli/bin.mjs" dev -p "$PORT"
+AAI_DEV_HOST=0.0.0.0 aai dev -p "$PORT"

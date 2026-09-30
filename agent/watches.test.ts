@@ -1,17 +1,19 @@
-import { afterEach, vi } from "vitest";
+import { installFetchRoutes } from "@alexkroman1/aai/testing/vitest";
 import {
   eventText,
-  firstDelivery,
+  findTriggers,
   MAX_EVENT_CHARS,
+  MAX_WATCHES,
   unwatch,
-  verifyWebhook,
-  WEBHOOK_TOLERANCE_S,
+  WatchLimit,
+  watch,
   watchFor,
 } from "./watches.ts";
 
-// The webhook is the one route a stranger can reach, so these pin what it trusts: only a
-// delivery signed with the secret over its exact bytes, only recently, only for a trigger
-// a speaker asked for and owned by the user it names, and only once.
+// The webhook's signature check and its redelivery dedupe are the SDK's (webhookRoute,
+// the run's dedupe key); these pin what is the device's: an event counts only for a watch
+// a speaker asked for and owns, a speaker can only stop its own watches, and what the
+// judge and the worker are handed.
 
 const ctx = {
   env: {
@@ -20,61 +22,6 @@ const ctx = {
     COMPOSIO_API_KEY: "ak_test",
   },
 };
-
-afterEach(() => vi.unstubAllGlobals());
-
-async function sign(secret: string, id: string, ts: string, body: string): Promise<string> {
-  const key = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const mac = new Uint8Array(
-    await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`${id}.${ts}.${body}`)),
-  );
-  return `v1,${btoa(String.fromCharCode(...mac))}`;
-}
-
-describe("verifyWebhook", () => {
-  const secret = "whsec_test";
-  const now = 1_800_000_000;
-  const ts = String(now);
-  // Spacing and key order JSON.stringify(JSON.parse(body)) would not reproduce.
-  const body = '{ "type":"composio.trigger.message",  "id":"msg_1" }';
-
-  test("accepts Composio's signature over the raw body", async () => {
-    const headers = {
-      "webhook-id": "msg_1",
-      "webhook-timestamp": ts,
-      "webhook-signature": await sign(secret, "msg_1", ts, body),
-    };
-    expect(await verifyWebhook(secret, headers, body, now)).toBe(true);
-  });
-
-  test("refuses a re-serialized body, a wrong secret, and a stale delivery", async () => {
-    const headers = {
-      "webhook-id": "msg_1",
-      "webhook-timestamp": ts,
-      "webhook-signature": await sign(secret, "msg_1", ts, body),
-    };
-    expect(await verifyWebhook(secret, headers, JSON.stringify(JSON.parse(body)), now)).toBe(false);
-    expect(await verifyWebhook("other", headers, body, now)).toBe(false);
-    expect(await verifyWebhook(secret, headers, body, now + WEBHOOK_TOLERANCE_S + 1)).toBe(false);
-    expect(await verifyWebhook(secret, {}, body, now)).toBe(false);
-  });
-
-  test("accepts any of several signatures, as during a secret rotation", async () => {
-    const good = await sign(secret, "msg_1", ts, body);
-    const headers = {
-      "webhook-id": "msg_1",
-      "webhook-timestamp": ts,
-      "webhook-signature": `v1,bm9wZQ== ${good}`,
-    };
-    expect(await verifyWebhook(secret, headers, body, now)).toBe(true);
-  });
-});
 
 const watchRow = {
   trigger_id: "ti_1",
@@ -85,18 +32,12 @@ const watchRow = {
   created_at: "2026-09-29T00:00:00Z",
 };
 
-function fake(handler: (url: URL, init: RequestInit) => unknown) {
-  const calls: { url: URL; init: RequestInit }[] = [];
-  vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
-    const u = new URL(url);
-    calls.push({ url: u, init });
-    return Response.json(handler(u, init) ?? []);
-  });
-  return calls;
-}
-
 test("an event counts only for a watch owned by the user it names", async () => {
-  fake((u) => (u.searchParams.get("trigger_id") === "eq.ti_1" ? [watchRow] : []));
+  installFetchRoutes({
+    "GET supabase.test": (req) => ({
+      body: req.searchParams.get("trigger_id") === "eq.ti_1" ? [watchRow] : [],
+    }),
+  });
   const event = (user: string, trigger = "ti_1") => ({
     id: "msg_1",
     type: "composio.trigger.message",
@@ -107,34 +48,89 @@ test("an event counts only for a watch owned by the user it names", async () => 
   expect(await watchFor(ctx, event("kitchen", "ti_other"))).toBeUndefined();
 });
 
-test("a redelivered event is seen once", async () => {
-  const seen = new Set<string>();
-  fake((_u, init) => {
-    const { event_id } = JSON.parse(String(init.body));
-    if (seen.has(event_id)) return [];
-    seen.add(event_id);
-    return [{ event_id }];
-  });
-  expect(await firstDelivery(ctx, "msg_1", "ti_1")).toBe(true);
-  expect(await firstDelivery(ctx, "msg_1", "ti_1")).toBe(false);
-});
-
 test("a speaker can only stop its own watches", async () => {
-  // Supabase answers rows (only kitchen has one); Composio answers an object.
-  const calls = fake((u) =>
-    u.host !== "supabase.test"
-      ? {}
-      : u.searchParams.get("client_id") === "eq.kitchen"
-        ? [watchRow]
-        : [],
-  );
+  // Only kitchen has a watch.
+  const net = installFetchRoutes({
+    "GET supabase.test": (req) => ({
+      body: req.searchParams.get("client_id") === "eq.kitchen" ? [watchRow] : [],
+    }),
+    "DELETE supabase.test": { status: 204 },
+    "DELETE backend.composio.dev": { body: {} },
+  });
   expect(await unwatch(ctx, "bedroom", "ti_1")).toBe(false);
-  expect(calls.some((c) => c.init.method === "DELETE")).toBe(false);
+  expect(net.hits.some((h) => h.method === "DELETE")).toBe(false);
   expect(await unwatch(ctx, "kitchen", "ti_1")).toBe(true);
-  expect(calls.filter((c) => c.init.method === "DELETE").map((c) => c.url.pathname)).toEqual([
+  expect(net.hits.filter((h) => h.method === "DELETE").map((h) => h.pathname)).toEqual([
     "/api/v3.1/trigger_instances/manage/ti_1",
     "/rest/v1/app_watches",
   ]);
+});
+
+test("a trigger Composio already lost still loses its row", async () => {
+  const net = installFetchRoutes({
+    "GET supabase.test": { body: [watchRow] },
+    "DELETE supabase.test": { status: 204 },
+    "DELETE backend.composio.dev": { status: 404, body: { error: { message: "not found" } } },
+  });
+  expect(await unwatch(ctx, "kitchen", "ti_1")).toBe(true);
+  expect(net.to("DELETE supabase.test")).toHaveLength(1);
+});
+
+test("a speaker at its limit starts no new trigger", async () => {
+  const net = installFetchRoutes({
+    "GET supabase.test": { body: Array.from({ length: MAX_WATCHES }, () => watchRow) },
+  });
+  await expect(
+    watch(ctx, "kitchen", {
+      app: "gmail",
+      trigger: "GMAIL_NEW_GMAIL_MESSAGE",
+      config: {},
+      instruction: "an email from Sam",
+    }),
+  ).rejects.toBeInstanceOf(WatchLimit);
+  expect(net.to("backend.composio.dev")).toEqual([]);
+});
+
+test("the triggers offered are the ones that can be set up by voice", async () => {
+  const net = installFetchRoutes({
+    "GET backend.composio.dev": {
+      body: {
+        items: [
+          {
+            slug: "GMAIL_NEW_GMAIL_MESSAGE",
+            name: "New email",
+            description: "A new   email arrived",
+            type: "poll",
+            config: {
+              properties: { labelIds: { type: "string", description: "Label" }, interval: {} },
+              required: ["labelIds"],
+            },
+          },
+          {
+            slug: "SLACK_RECEIVE_MESSAGE",
+            name: "Message",
+            description: "Needs a hand-registered webhook",
+            type: "webhook",
+            config: {},
+            requires_webhook_endpoint_setup: true,
+          },
+        ],
+      },
+    },
+  });
+  expect(await findTriggers(ctx, "gmail")).toEqual([
+    {
+      trigger: "GMAIL_NEW_GMAIL_MESSAGE",
+      name: "New email",
+      description: "A new email arrived",
+      polled: true,
+      config: [
+        { name: "labelIds", type: "string", required: true, description: "Label" },
+        { name: "interval", type: "any", required: false },
+      ],
+    },
+  ]);
+  expect(net.hits[0]?.searchParams.get("toolkit_slugs")).toBe("gmail");
 });
 
 test("an event is handed to the judge compacted and capped", () => {

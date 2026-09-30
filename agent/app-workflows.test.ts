@@ -1,17 +1,20 @@
+import { mcpToolName, tool } from "@alexkroman1/aai";
+import { stubStepMcp } from "@alexkroman1/aai/experimental";
+import { createToolContext, createWorkflowContext, runTool } from "@alexkroman1/aai/testing";
 import {
-  createStubWorkflows,
-  createToolContext,
-  createWorkflowContext,
-  runTool,
-  stubClientInbox,
-  stubSpeech,
-} from "@alexkroman1/aai/testing";
+  installStubClientInbox,
+  installStubReporter,
+  installStubSpeech,
+  installStubStepDelegate,
+  installStubWorkflows,
+} from "@alexkroman1/aai/testing/vitest";
 import { afterEach, describe, expect, test, vi } from "vitest";
+import { z } from "zod";
+import { COMPOSIO_MCP_TOOLS } from "./apps.ts";
 import { appJob } from "./shared.ts";
 import appTask, { HANDOFF_LINE, TEXT_HANDOFF_LINE } from "./tools/app_task.ts";
 import { appEventFlow, tell } from "./workflows/app-event.ts";
-import { announce, worker } from "./workflows/app-job.ts";
-import { NOTICE_SAMPLE_RATE } from "./workflows/remind.ts";
+import { announce, work, worker } from "./workflows/app-job.ts";
 
 // The background halves of the household's apps: app_task's run and the watch events the
 // webhook starts. Composio and the model are not reached here (apps.test.ts and
@@ -19,16 +22,13 @@ import { NOTICE_SAMPLE_RATE } from "./workflows/remind.ts";
 
 describe("app_task", () => {
   test("starts a job for this speaker, keyed by its client id for the Running panel", async () => {
-    const start = vi.fn(async () => "wrun_1");
-    const ctx = createToolContext({
-      clientId: "kitchen",
-      workflows: createStubWorkflows({ start }),
-    });
+    const workflows = installStubWorkflows({ runId: "wrun_1" });
+    const ctx = createToolContext({ clientId: "kitchen", workflows });
     const result = await runTool(appTask, { task: "summarize my last 50 emails" }, ctx);
     // The handoff line the agent says if it didn't already: the answer comes later, spoken.
     expect(result).toMatchObject({ started: true, say_if_not_said: HANDOFF_LINE });
     expect(JSON.stringify(result)).toContain("nothing is texted");
-    expect(start).toHaveBeenCalledWith(
+    expect(workflows.start).toHaveBeenCalledWith(
       appJob,
       { task: "summarize my last 50 emails", clientId: "kitchen", text: false },
       { key: "kitchen", label: "summarize my last 50 emails" },
@@ -36,14 +36,11 @@ describe("app_task", () => {
   });
 
   test("texts the answer only when they asked, and says so as it hands off", async () => {
-    const start = vi.fn(async () => "wrun_1");
-    const ctx = createToolContext({
-      clientId: "kitchen",
-      workflows: createStubWorkflows({ start }),
-    });
+    const workflows = installStubWorkflows({ runId: "wrun_1" });
+    const ctx = createToolContext({ clientId: "kitchen", workflows });
     const result = await runTool(appTask, { task: "summarize #general", text: true }, ctx);
     expect(result).toMatchObject({ started: true, say_if_not_said: TEXT_HANDOFF_LINE });
-    expect(start).toHaveBeenCalledWith(
+    expect(workflows.start).toHaveBeenCalledWith(
       appJob,
       expect.objectContaining({ task: "summarize #general", text: true }),
       expect.anything(),
@@ -51,30 +48,54 @@ describe("app_task", () => {
   });
 
   test("a session with no speaker has no apps to work on", async () => {
-    const start = vi.fn(async () => "wrun_1");
-    const ctx = createToolContext({ workflows: createStubWorkflows({ start }) });
+    const workflows = installStubWorkflows();
+    const ctx = createToolContext({ workflows });
     expect(await runTool(appTask, { task: "summarize my email" }, ctx)).toHaveProperty("error");
-    expect(start).not.toHaveBeenCalled();
+    expect(workflows.start).not.toHaveBeenCalled();
   });
 });
 
-test("the worker has the app and watch tools, the workbench and run_code", () => {
-  const w = worker("kitchen");
-  expect(Object.keys(w.tools ?? {}).sort()).toEqual([
-    "call_app_api",
-    "find_app_action",
-    "find_app_trigger",
-    "run_app_action",
-    "stop_watching",
-    "watch_app",
-    "workbench",
-  ]);
-  expect(w.builtinTools).toEqual(["run_code"]);
+/** Composio's meta tools as stepMcp would hand them over, by the names the worker calls. */
+const mcpTools = Object.fromEntries(
+  COMPOSIO_MCP_TOOLS.map((name) => [
+    mcpToolName("composio", name),
+    tool({ description: name, inputSchema: z.object({}), execute: () => ({}) }),
+  ]),
+);
+
+describe("the appJob worker", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  test("has Composio's MCP tools, the watch tools and run_code", () => {
+    const w = worker("kitchen", mcpTools);
+    expect(Object.keys(w.tools ?? {}).sort()).toEqual(
+      [...Object.keys(mcpTools), "find_app_trigger", "stop_watching", "watch_app"].sort(),
+    );
+    expect(Object.keys(mcpTools)).toContain("mcp_composio_composio_search_tools");
+    expect(w.builtinTools).toEqual(["run_code"]);
+  });
+
+  test("work connects Composio for this speaker and hands its tools to the worker", async () => {
+    vi.stubEnv("COMPOSIO_API_KEY", "ak_test");
+    const mcp = stubStepMcp(mcpTools);
+    try {
+      installStubReporter();
+      const delegate = installStubStepDelegate({ reply: "You have three new emails." });
+      const answer = await work({ task: "check my email", clientId: "kitchen" });
+      expect(answer).toBe("You have three new emails.");
+      expect(mcp.calls).toEqual([{ keys: ["composio"], options: { clientId: "kitchen" } }]);
+      const [call] = delegate.calls;
+      expect(call?.task).toBe("check my email");
+      expect(Object.keys(call?.subagent.tools ?? {})).toEqual(
+        expect.arrayContaining(Object.keys(mcpTools)),
+      );
+    } finally {
+      mcp.restore();
+    }
+  });
 });
 
 describe("the appEvent workflow", () => {
-  afterEach(() => vi.unstubAllEnvs());
-
   const input = {
     clientId: "kitchen",
     instruction: "an email from Sam",
@@ -84,52 +105,37 @@ describe("the appEvent workflow", () => {
   };
 
   test("an event judged unwanted says nothing", async () => {
-    const ctx = createWorkflowContext({ runSteps: false });
-    vi.spyOn(ctx, "step").mockResolvedValueOnce({ tell: false, say: "" });
+    const ctx = createWorkflowContext({
+      runSteps: false,
+      results: { judge: { tell: false, say: "" } },
+    });
     expect(await appEventFlow(input, ctx)).toEqual({ told: false });
-    expect(ctx.step).toHaveBeenCalledTimes(1);
+    expect(ctx.steps.map((s) => s.name)).toEqual(["judge"]);
   });
 
-  test("tell speaks at the board's rate and pushes it under the run id", async () => {
-    vi.stubEnv("ASSEMBLYAI_API_KEY", "test-key");
-    const speech = stubSpeech({ pcmBytes: 3200 });
-    const inbox = stubClientInbox();
-    try {
-      await tell("wrun_9", input, "Sam just emailed about dinner.");
-      expect(speech.calls).toMatchObject([
-        { text: "Sam just emailed about dinner.", sampleRate: NOTICE_SAMPLE_RATE },
-      ]);
-      const [{ clientId, notice }] = inbox.calls as [(typeof inbox.calls)[number]];
-      expect(clientId).toBe("kitchen");
-      expect(notice).toMatchObject({
-        id: "wrun_9",
-        event: "app",
-        data: { app: "gmail", said: "Sam just emailed about dinner." },
-      });
-    } finally {
-      speech.restore();
-      inbox.restore();
-    }
+  test("tell says it on the speaker under the run id", async () => {
+    installStubSpeech({ pcmBytes: 3200 });
+    const inbox = installStubClientInbox();
+    await tell("wrun_9", input, "Sam just emailed about dinner.");
+    const [{ clientId, notice }] = inbox.calls as [(typeof inbox.calls)[number]];
+    expect(clientId).toBe("kitchen");
+    expect(notice).toMatchObject({
+      id: "wrun_9",
+      event: "app",
+      data: { app: "gmail", said: "Sam just emailed about dinner." },
+    });
   });
 });
 
 describe("the appJob announcement", () => {
-  afterEach(() => vi.unstubAllEnvs());
-
   async function said(
     input: Parameters<typeof announce>[1],
     texted?: Parameters<typeof announce>[3],
   ) {
-    vi.stubEnv("ASSEMBLYAI_API_KEY", "test-key");
-    const speech = stubSpeech({ pcmBytes: 3200 });
-    const inbox = stubClientInbox();
-    try {
-      await announce("wrun_2", input, "Three new messages.", texted);
-      return speech.calls[0]?.text;
-    } finally {
-      speech.restore();
-      inbox.restore();
-    }
+    installStubSpeech();
+    const inbox = installStubClientInbox();
+    await announce("wrun_2", input, "Three new messages.", texted);
+    return (inbox.calls.at(-1)?.notice.data as { said?: string } | undefined)?.said;
   }
 
   test("an unasked run is only said, with no word of a text", async () => {

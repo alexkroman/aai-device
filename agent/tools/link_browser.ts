@@ -1,4 +1,5 @@
-import { sessionClientId, tool, toolFailure } from "@alexkroman1/aai";
+import { requireSessionClient, tool, toolFailure } from "@alexkroman1/aai";
+import { isToolFailure } from "@alexkroman1/aai/utils";
 import { z } from "zod";
 import { claimLinkCode } from "../link.ts";
 
@@ -13,8 +14,8 @@ export default tool({
     code: z.string().max(20).describe("The code as they said it, e.g. '482913'"),
   }),
   async execute({ code }, ctx) {
-    const speaker = sessionClientId(ctx);
-    if (!speaker) return toolFailure("Only a speaker can link a browser.");
+    const speaker = requireSessionClient(ctx, "Only a speaker can link a browser.");
+    if (isToolFailure(speaker)) return speaker;
     const result = await claimLinkCode(ctx, code, speaker);
     switch (result.status) {
       case "linked":

@@ -1,3 +1,4 @@
+import type { EnvContext } from "@alexkroman1/aai/step";
 import { sha256 } from "./profile.ts";
 import { rest } from "./supabase.ts";
 
@@ -10,8 +11,6 @@ import { rest } from "./supabase.ts";
 // Saying the code is the proof: only someone near the speaker can hear the page's code
 // AND speak to the speaker, so a stranger on the LAN cannot join a speaker by guessing.
 
-type Ctx = { env: Readonly<Partial<Record<string, string>>>; signal?: AbortSignal };
-
 export const LINK_CODE_DIGITS = 6;
 export const LINK_CODE_TTL_MS = 5 * 60 * 1000;
 /** Wrong codes tried against the pending ones before they all die. */
@@ -22,7 +21,7 @@ export const MAX_LINK_ATTEMPTS = 5;
  * an unlink, an old claim must not link it straight back to the old speaker.
  */
 export async function createLinkCode(
-  ctx: Ctx,
+  ctx: EnvContext,
   browserClient: string,
   now = Date.now(),
 ): Promise<{ code: string; expiresAt: number }> {
@@ -49,7 +48,7 @@ export type ClaimResult =
 
 /** The speaker's half: the code as said, and the speaker's own client id. */
 export async function claimLinkCode(
-  ctx: Ctx,
+  ctx: EnvContext,
   said: string,
   speakerClient: string,
   now = Date.now(),
@@ -79,7 +78,10 @@ export async function claimLinkCode(
 }
 
 /** The page's poll: the speaker it was linked to, once a code of its was claimed. */
-export async function linkStatus(ctx: Ctx, browserClient: string): Promise<string | undefined> {
+export async function linkStatus(
+  ctx: EnvContext,
+  browserClient: string,
+): Promise<string | undefined> {
   const rows = await rest<{ speaker_client: string | null }[]>(
     ctx,
     `/link_codes?select=speaker_client&browser_client=eq.${enc(browserClient)}` +

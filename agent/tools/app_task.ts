@@ -1,4 +1,5 @@
-import { sessionClientId, sessionClientPhone, tool, toolFailure } from "@alexkroman1/aai";
+import { requireSessionClient, sessionClientPhone, tool } from "@alexkroman1/aai";
+import { isToolFailure } from "@alexkroman1/aai/utils";
 import { z } from "zod";
 import { appJob } from "../shared.ts";
 
@@ -23,9 +24,12 @@ export default tool({
     "summarizing needs no yes, even when the answer is to be texted to them: call it " +
     "straight away. Before an email or message to someone else, a post, booking, " +
     "purchase, deletion or change, say exactly what you'll do and call this only after " +
-    "they say yes, with 'they confirmed' in the task. Set text to true when they asked to be texted the " +
-    "answer (writing 'text me' in the task sends nothing); otherwise never offer or " +
-    "mention a text.",
+    "they say yes, with 'they confirmed' in the task. Sending the answer to THEM through " +
+    "one of their apps ('slack me', 'email me', 'DM me') needs no yes either: keep those " +
+    "words in the task, e.g. 'summarize #boardroom and send the summary to me as a Slack " +
+    "DM', and leave text out. text is only for an SMS: set it to true when they asked to " +
+    "be texted the answer (writing 'text me' in the task sends nothing); otherwise never " +
+    "offer or mention a text.",
   inputSchema: z.object({
     task: z
       .string()
@@ -41,12 +45,13 @@ export default tool({
       .optional()
       .describe(
         "REQUIRED true whenever they said 'text me' or asked for the answer by text: the " +
-          "task wording alone does not send a text. Else leave it out; the answer is said.",
+          "task wording alone does not send a text. Never for 'slack me', 'email me' or " +
+          "another app: that goes in the task. Else leave it out; the answer is said.",
       ),
   }),
   async execute({ task, text = false }, ctx) {
-    const clientId = sessionClientId(ctx);
-    if (!clientId) return toolFailure("Apps work on a speaker or its linked page only.");
+    const clientId = requireSessionClient(ctx, "Apps work on a speaker or its linked page only.");
+    if (isToolFailure(clientId)) return clientId;
     // Keyed by the speaker, so its Running panel can find the run (GET /api/tasks).
     const phone = sessionClientPhone(ctx);
     await ctx.workflows.start(

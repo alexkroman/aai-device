@@ -1,4 +1,6 @@
-import { afterEach, vi } from "vitest";
+import type { StubFetchRoutes } from "@alexkroman1/aai/testing";
+import { installFetchRoutes } from "@alexkroman1/aai/testing/vitest";
+import { beforeEach } from "vitest";
 import { approveCall, DRAFT_TTL_MS, MAX_CALLS_PER_DAY } from "./calls.ts";
 import { callReport } from "./workflows/call.ts";
 
@@ -23,23 +25,28 @@ function draft(over: Record<string, unknown> = {}) {
   };
 }
 
-/** Answer PostgREST calls in order: the draft read, the day's count, then the PATCH. */
-function supabase(...answers: unknown[]) {
-  const calls: { url: string; init: RequestInit }[] = [];
-  vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
-    calls.push({ url, init });
-    const body = answers.shift();
-    return new Response(body === undefined ? "" : JSON.stringify(body), { status: 200 });
+let answers: unknown[] = [];
+let net: StubFetchRoutes;
+beforeEach(() => {
+  answers = [];
+  net = installFetchRoutes({
+    "supabase.test": () => {
+      const body = answers.shift();
+      return body === undefined ? { status: 200 } : { body };
+    },
   });
-  return calls;
+});
+
+/** Answer PostgREST calls in order: the draft read, the day's count, then the PATCH. */
+function supabase(...next: unknown[]) {
+  answers = next;
 }
-afterEach(() => vi.unstubAllGlobals());
 
 test("approves this session's fresh draft, and marks it approved", async () => {
-  const calls = supabase([draft()], [], undefined);
+  supabase([draft()], [], undefined);
   expect(await approveCall(ctx, "call_1", session, now)).toMatchObject({ status: "approved" });
-  expect(calls.at(-1)?.init.method).toBe("PATCH");
-  expect(JSON.parse(String(calls.at(-1)?.init.body))).toMatchObject({ status: "approved" });
+  expect(net.hits.at(-1)?.method).toBe("PATCH");
+  expect(net.hits.at(-1)?.json).toMatchObject({ status: "approved" });
 });
 
 test("refuses a draft from another conversation or another speaker", async () => {

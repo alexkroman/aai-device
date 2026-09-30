@@ -68,6 +68,7 @@ def main() -> int:
     commands = sdk_text("protocol-commands.ts")
     upgrade = sdk_text("ws-upgrade.ts")
     notify = sdk_text("step-notify-client.ts")  # its module doc carries the wire format
+    say = sdk_text("step-say-on-client.ts")  # sets data.said itself
     inbox = (SDK_RUNTIME / "client-inbox.ts").read_text()
     tools = "\n".join(f.read_text() for f in sorted(AGENT_TOOLS.glob("*.ts")))
     workflows = "\n".join(f.read_text() for f in sorted((AGENT_TOOLS.parent / "workflows").glob("*.ts")))
@@ -82,9 +83,11 @@ def main() -> int:
         "notice_field": lambda n: (
             re.search(rf'"{re.escape(n)}"', notify) or re.search(rf"\b{re.escape(n)}:", inbox)
         ),
+        # a field the agent's workflows put in `data`, or one stepSayOnClient adds itself
         "notice_data_field": lambda n: re.search(
-            rf"stepNotifyClient\([^;]*data: \{{[^}}]*\b{re.escape(n)}\b", workflows
-        ),
+            rf"step(NotifyClient|SayOnClient)\([^;]*data: \{{[^}}]*\b{re.escape(n)}\b", workflows
+        )
+        or re.search(rf"data: \{{ \.\.\.options\.data, {re.escape(n)}: text \}}", say),
         "notice_reply": lambda n: re.search(rf'msg\.type === "{re.escape(n)}"', inbox),
         "custom_event": lambda n: re.search(rf'ctx\.send\(\s*"{re.escape(n)}"', tools),
     }

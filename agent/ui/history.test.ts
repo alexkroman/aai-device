@@ -1,115 +1,115 @@
-import {
-  addNote,
-  addSpoken,
-  type Entry,
-  type Item,
-  MAX_ENTRIES,
-  recordSession,
-} from "./history.ts";
+import { LOG_KEY, migrateHistory } from "./history.ts";
 
-const user = (text: string): Item => ({ kind: "message", role: "user", text });
-const agent = (text: string): Item => ({ kind: "message", role: "assistant", text });
+/** An in-memory stand-in for localStorage. */
+function memory(init: Record<string, string> = {}) {
+  const data = new Map(Object.entries(init));
+  return {
+    data,
+    getItem: (k: string) => data.get(k) ?? null,
+    setItem: (k: string, v: string) => void data.set(k, v),
+    removeItem: (k: string) => void data.delete(k),
+  };
+}
 
-test("a session's conversation replaces its entry as it grows", () => {
-  let h: Entry[] = [];
-  h = recordSession(h, "s1", [user("hi")], 1);
-  h = recordSession(h, "s1", [user("hi"), agent("hello")], 2);
-  expect(h).toEqual([
-    { kind: "session", sessionId: "s1", run: 0, at: 1, items: [user("hi"), agent("hello")] },
+const LEGACY = [
+  {
+    kind: "session",
+    sessionId: "s1",
+    run: 0,
+    at: 1,
+    clientId: "speaker-1",
+    items: [
+      { kind: "message", role: "user", text: "remind me at five" },
+      { kind: "tool", name: "remind_me", args: '{"at":"17:00"}', done: true },
+      { kind: "message", role: "assistant", text: "Okay, at 5 PM." },
+    ],
+  },
+  { kind: "note", at: 2, text: "New session" },
+  { kind: "spoken", at: 3, text: "Time to call the plumber." },
+  // Written before `run` existed, with a tool call that never finished.
+  {
+    kind: "session",
+    sessionId: "s2",
+    at: 4,
+    items: [{ kind: "tool", name: "web_search", args: "{}", done: false }],
+  },
+  { kind: "bogus" },
+];
+
+test("the old history moves into the new log's format, and the old key goes", () => {
+  const store = memory({ "aai-device:history": JSON.stringify(LEGACY) });
+  migrateHistory(store);
+  expect(store.data.has("aai-device:history")).toBe(false);
+  expect(JSON.parse(store.data.get(LOG_KEY) as string)).toEqual([
+    {
+      kind: "session",
+      sessionId: "s1",
+      run: 0,
+      at: 1,
+      clientId: "speaker-1",
+      items: [
+        { kind: "message", message: { id: 0, role: "user", content: "remind me at five" } },
+        {
+          kind: "tool",
+          toolCall: {
+            callId: "legacy-1",
+            name: "remind_me",
+            args: { at: "17:00" },
+            status: "done",
+            seq: 1,
+            afterMessageId: -1,
+          },
+        },
+        { kind: "message", message: { id: 2, role: "assistant", content: "Okay, at 5 PM." } },
+      ],
+    },
+    { kind: "note", at: 2, text: "New session" },
+    { kind: "spoken", at: 3, text: "Time to call the plumber." },
+    {
+      kind: "session",
+      sessionId: "s2",
+      run: 0,
+      at: 4,
+      items: [
+        {
+          kind: "tool",
+          toolCall: {
+            callId: "legacy-0",
+            name: "web_search",
+            args: {},
+            status: "pending",
+            seq: 0,
+            afterMessageId: -1,
+          },
+        },
+      ],
+    },
   ]);
 });
 
-const texts = (h: Entry[]) =>
-  h.map((e) =>
-    e.kind === "session"
-      ? e.items.map((it) => (it.kind === "message" ? it.text : it.name))
-      : e.text,
-  );
-
-test("a resume replaying the history does not log it twice, and keeps the order", () => {
-  let h = recordSession([], "s1", [user("hi"), agent("hello")], 1);
-  h = addNote(h, "Reminder: call the plumber", 2);
-  // Reconnected with ?sessionId=s1: history.restored, then a new turn and its reply.
-  h = recordSession(h, "s1", [user("hi"), agent("hello")], 3);
-  h = recordSession(h, "s1", [user("hi"), agent("hello"), user("and now?")], 4);
-  h = recordSession(h, "s1", [user("hi"), agent("hello"), user("and now?"), agent("now this")], 5);
-  expect(texts(h)).toEqual([
-    ["hi", "hello"],
-    "Reminder: call the plumber",
-    ["and now?", "now this"],
-  ]);
-});
-
-test("what the speaker says on its own is its own entry, in order, between turns", () => {
-  let h = recordSession([], "s1", [user("summarize slack"), agent("On it.")], 1);
-  h = addSpoken(h, "Three things happened in boardroom today.", 2);
-  h = recordSession(h, "s1", [user("summarize slack"), agent("On it."), user("thanks")], 3);
-  expect(h[1]).toEqual({
-    kind: "spoken",
-    at: 2,
-    text: "Three things happened in boardroom today.",
+test("the old history goes ahead of anything the new log already holds", () => {
+  const newer = { kind: "note", at: 10, text: "Continuing an earlier conversation" };
+  const store = memory({
+    "aai-device:history": JSON.stringify([{ kind: "note", at: 1, text: "New session" }]),
+    [LOG_KEY]: JSON.stringify([newer]),
   });
-  expect(texts(h)).toEqual([
-    ["summarize slack", "On it."],
-    "Three things happened in boardroom today.",
-    ["thanks"],
+  migrateHistory(store);
+  expect(JSON.parse(store.data.get(LOG_KEY) as string)).toEqual([
+    { kind: "note", at: 1, text: "New session" },
+    newer,
   ]);
 });
 
-test("a tool call finishing early in a chain updates it where it is", () => {
-  const pending: Item = { kind: "tool", name: "remind_me", args: "{}", done: false };
-  let h = recordSession([], "s1", [pending], 1);
-  h = addNote(h, "note", 2);
-  h = recordSession(h, "s1", [{ ...pending, done: true }, agent("Set.")], 3);
-  expect(h[0]).toMatchObject({ items: [{ ...pending, done: true }] });
-  expect(texts(h)).toEqual([["remind_me"], "note", ["Set."]]);
+test("nothing to carry over leaves storage alone", () => {
+  const store = memory({ [LOG_KEY]: "[]" });
+  migrateHistory(store);
+  expect([...store.data]).toEqual([[LOG_KEY, "[]"]]);
+  expect(() => migrateHistory(undefined)).not.toThrow();
 });
 
-test("a session the server lost comes back greeting: a new run, not a swallowed replay", () => {
-  const hi = agent("Hi, what can I do for you?");
-  let h = recordSession(
-    [],
-    "s1",
-    [hi, user("remind me at five"), agent("Done."), user("thanks")],
-    1,
-  );
-  // Same id, fresh server: the greeting again, then a different conversation.
-  h = recordSession(h, "s1", [hi, user("pancakes?")], 2);
-  expect(texts(h)).toEqual([
-    ["Hi, what can I do for you?", "remind me at five", "Done.", "thanks"],
-    ["Hi, what can I do for you?", "pancakes?"],
-  ]);
-});
-
-test("a partial replay mid-reconnect changes nothing", () => {
-  const h = recordSession([], "s1", [user("hi"), agent("hello")], 1);
-  expect(recordSession(h, "s1", [user("hi")], 2)).toEqual(h);
-});
-
-test("a retired session back under the same id starts a new entry instead of wiping the old", () => {
-  let h = recordSession([], "s1", [user("hi"), agent("hello")], 1);
-  h = recordSession(h, "s1", [user("what time is it")], 2);
-  h = recordSession(h, "s1", [user("what time is it"), agent("noon")], 3);
-  expect(texts(h)).toEqual([
-    ["hi", "hello"],
-    ["what time is it", "noon"],
-  ]);
-});
-
-test("a tool call finishing is the same session", () => {
-  const pending: Item = { kind: "tool", name: "remind_me", args: '{"in_seconds":60}', done: false };
-  let h = recordSession([], "s1", [pending], 1);
-  h = recordSession(h, "s1", [{ ...pending, done: true }, agent("Okay, at 5 PM.")], 2);
-  expect(h).toHaveLength(1);
-});
-
-test("an empty conversation records nothing", () => {
-  expect(recordSession([], "s1", [], 1)).toEqual([]);
-});
-
-test("the oldest entries go first past MAX_ENTRIES", () => {
-  let h: Entry[] = [];
-  for (let i = 0; i <= MAX_ENTRIES; i++) h = addNote(h, `n${i}`, i);
-  expect(h).toHaveLength(MAX_ENTRIES);
-  expect(h[0]).toMatchObject({ text: "n1" });
+test("an unreadable old history is dropped, not thrown on", () => {
+  const store = memory({ "aai-device:history": "{not json" });
+  migrateHistory(store);
+  expect(store.data.has("aai-device:history")).toBe(false);
+  expect(store.data.get(LOG_KEY)).toBe("[]");
 });

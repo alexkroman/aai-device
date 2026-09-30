@@ -1,8 +1,12 @@
-import { type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
-import { browserId, clientId } from "./client-id.ts";
-import type { Entry, Item } from "./history.ts";
+import {
+  type ConversationLogEntry,
+  ConversationView,
+  SessionErrorBanner,
+  ToolCallRow,
+} from "@alexkroman1/aai-ui";
+import { type FormEvent, useState } from "react";
+import { linked } from "./client-id.ts";
 import { Ring } from "./ring.tsx";
-import { phoneE164, readSetting, type Setting, writeSetting } from "./settings.ts";
 import { Sidebar } from "./sidebar.tsx";
 import { type Led, useDevice } from "./use-device.ts";
 
@@ -20,20 +24,27 @@ const STATUS: Record<Led, string> = {
 
 export function App() {
   const device = useDevice();
+  const { live, buttonProps } = device.tap;
 
   return (
     <main className="flex flex-col md:flex-row h-screen bg-aai-bg text-aai-text">
       <section className="flex flex-col items-center gap-6 p-6 md:w-96 shrink-0 overflow-y-auto border-b md:border-b-0 md:border-r border-aai-border">
-        <TalkButton led={device.led} live={device.live} onToggle={device.toggleLive} />
+        {/* One press goes live, mic open for a realtime conversation; the next hangs up. */}
+        <button
+          type="button"
+          {...buttonProps}
+          className={`relative grid place-items-center rounded-full bg-aai-surface border border-aai-border cursor-pointer select-none transition-transform focus-visible:outline-2 focus-visible:outline-aai-primary ${
+            live ? "scale-95" : ""
+          }`}
+        >
+          <Ring led={device.led} />
+          <span className="absolute text-sm font-semibold tracking-wide opacity-70">
+            {live ? "Tap to hang up" : "Tap to talk"}
+          </span>
+        </button>
         <p className="text-sm text-center text-balance min-h-10 leading-relaxed" aria-live="polite">
           {STATUS[device.led]}
         </p>
-        <SettingField
-          setting="phone"
-          label="Text me at (with the country code, e.g. +1)"
-          placeholder="e.g. +1 555 555 0123"
-          type="tel"
-        />
         <p className="text-xs opacity-60" title="Reminders and research summaries come here">
           Speaker {device.clientId}: inbox {device.inboxUp ? "connected" : "offline"}
         </p>
@@ -56,135 +67,80 @@ export function App() {
             New session
           </button>
         </header>
-        <History
-          entries={device.history}
-          current={device.sessionId}
-          onContinue={device.continueSession}
-        >
-          {device.transcript.text && <Bubble from="user" text={device.transcript.text} live />}
-          {device.streaming && <Bubble from="assistant" text={device.streaming} live />}
-        </History>
-        {device.error && (
-          <p role="alert" className="px-4 py-2 text-sm text-red-400 border-t border-aai-border">
-            {device.error.message}
-          </p>
-        )}
-        <Composer onSend={device.send} />
+        <ConversationView
+          log={device.history}
+          className="flex-1 min-h-0"
+          scrollClassName="aai-scroll overflow-y-auto"
+          contentClassName="px-4 py-4 flex flex-col gap-3"
+          empty={
+            <p className="text-sm text-center opacity-40 py-12">
+              Nothing said yet. Tap to talk, or type below.
+            </p>
+          }
+          renderMessage={(m) => <Bubble from={m.role} text={m.content} />}
+          renderStreaming={(text) => <Bubble from="assistant" text={text} live />}
+          renderTranscript={({ text }) => text && <Bubble from="user" text={text} live />}
+          renderTool={(t) => (
+            <ToolCallRow
+              title={t.name}
+              detail={Object.keys(t.args).length > 0 ? JSON.stringify(t.args) : undefined}
+              pending={t.status === "pending"}
+              variant="compact"
+              className="self-start max-w-full"
+            />
+          )}
+          renderNote={(n) => (
+            <p className="text-xs text-center opacity-50">
+              {clock(n.at)} · {n.text}
+            </p>
+          )}
+          renderSessionHeader={(entry) => (
+            <SessionHeader
+              entry={entry}
+              current={device.sessionId}
+              onContinue={device.continueSession}
+            />
+          )}
+          thinkingLabel="The speaker is thinking"
+          thinkingClassName="self-start text-sm opacity-50 px-3"
+        />
+        <SessionErrorBanner className="mx-3 mb-2" />
+        <Composer onSend={device.tap.send} />
       </section>
     </main>
   );
 }
 
-/** One press goes live, mic open for a realtime conversation; the next hangs up. */
-function TalkButton({ led, live, onToggle }: { led: Led; live: boolean; onToggle: () => void }) {
-  // The latest handler, read at call time, so the listener below is added once.
-  const toggle = useRef(onToggle);
-  toggle.current = onToggle;
-
-  // The space bar anywhere but a text field; its auto-repeat is not a new press.
-  useEffect(() => {
-    const onDown = (e: KeyboardEvent) => {
-      if (e.code !== "Space") return;
-      if (e.target instanceof Element && e.target.closest("input, textarea")) return;
-      e.preventDefault();
-      if (!e.repeat) toggle.current();
-    };
-    window.addEventListener("keydown", onDown);
-    return () => window.removeEventListener("keydown", onDown);
-  }, []);
-
-  return (
-    <button
-      type="button"
-      aria-pressed={live}
-      onClick={onToggle}
-      // Space is handled page-wide above; the button's own click would double it.
-      onKeyDown={(e) => e.code === "Space" && e.preventDefault()}
-      onKeyUp={(e) => e.code === "Space" && e.preventDefault()}
-      className={`relative grid place-items-center rounded-full bg-aai-surface border border-aai-border cursor-pointer select-none transition-transform focus-visible:outline-2 focus-visible:outline-aai-primary ${
-        live ? "scale-95" : ""
-      }`}
-    >
-      <Ring led={led} />
-      <span className="absolute text-sm font-semibold tracking-wide opacity-70">
-        {live ? "Tap to hang up" : "Tap to talk"}
-      </span>
-    </button>
-  );
-}
-
-function History({
-  entries,
+/** A session's time, and a way to make it the one a turn goes to. */
+function SessionHeader({
+  entry,
   current,
   onContinue,
-  children,
 }: {
-  entries: readonly Entry[];
+  entry: Extract<ConversationLogEntry, { kind: "session" }>;
   /** The session a turn goes to now. */
   current: string | undefined;
   /** Make an earlier session the one a turn goes to. */
   onContinue: (sessionId: string) => void;
-  children: ReactNode;
 }) {
-  const end = useRef<HTMLDivElement>(null);
-  const last = entries.at(-1);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: scroll on any new content
-  useEffect(() => {
-    end.current?.scrollIntoView({ block: "end" });
-  }, [entries.length, last, children]);
-
+  // Only a session of the page's CURRENT client can be continued from here: resumed under
+  // another id, it would move into that conversation.
+  const mine = (entry.clientId ?? linked.own()) === linked.id();
   return (
-    <div className="aai-scroll flex-1 overflow-y-auto px-4 py-4 flex flex-col gap-3">
-      {entries.length === 0 && (
-        <p className="text-sm text-center opacity-40 py-12">
-          Nothing said yet. Tap to talk, or type below.
-        </p>
-      )}
-      {entries.map((entry) =>
-        entry.kind === "spoken" ? (
-          <div key={`v${entry.at}`} className="flex flex-col gap-2">
-            <p className="text-xs text-center opacity-40">{clock(entry.at)}</p>
-            <Bubble from="assistant" text={entry.text} />
-          </div>
-        ) : entry.kind === "note" ? (
-          <p key={`n${entry.at}${entry.text}`} className="text-xs text-center opacity-50">
-            {clock(entry.at)} · {entry.text}
-          </p>
-        ) : (
-          <div key={`s${entry.sessionId}${entry.at}`} className="flex flex-col gap-2">
-            <p className="text-xs text-center opacity-40">
-              {clock(entry.at)}
-              {entry.sessionId === current ? (
-                <span className="ml-2 text-aai-primary">· current</span>
-              ) : (entry.clientId ?? browserId()) !== clientId() ? null : (
-                <button
-                  type="button"
-                  className="ml-2 underline hover:opacity-100"
-                  title="Type or talk to this conversation again"
-                  onClick={() => onContinue(entry.sessionId)}
-                >
-                  continue
-                </button>
-              )}
-            </p>
-            {entry.items.map((item, i) => (
-              // biome-ignore lint/suspicious/noArrayIndexKey: items are append-only within a session
-              <Row key={i} item={item} />
-            ))}
-          </div>
-        ),
-      )}
-      {children}
-      <div ref={end} />
-    </div>
-  );
-}
-
-function Row({ item }: { item: Item }) {
-  if (item.kind === "message") return <Bubble from={item.role} text={item.text} />;
-  return (
-    <p className="text-xs font-mono opacity-50 whitespace-pre-wrap [overflow-wrap:anywhere]">
-      {item.done ? "✓" : "…"} {item.name} {item.args === "{}" ? "" : item.args}
+    <p className="text-xs text-center opacity-40">
+      {clock(entry.at)}
+      {entry.sessionId === current ? (
+        <span className="ml-2 text-aai-primary">· current</span>
+      ) : mine ? (
+        <button
+          type="button"
+          className="ml-2 underline hover:opacity-100"
+          title="Type or talk to this conversation again"
+          onClick={() => onContinue(entry.sessionId)}
+        >
+          continue
+        </button>
+      ) : null}
     </p>
   );
 }
@@ -240,43 +196,6 @@ function Composer({ onSend }: { onSend: (text: string) => void }) {
         Send
       </button>
     </form>
-  );
-}
-
-/** One of the values this browser reports on connect (settings.ts); saved as typed. */
-function SettingField({
-  setting,
-  label,
-  placeholder,
-  type = "text",
-}: {
-  setting: Setting;
-  label: string;
-  placeholder: string;
-  type?: "text" | "tel";
-}) {
-  const [value, setValue] = useState(() => readSetting(setting));
-  const invalid = value.trim() !== "" && phoneE164(value) === undefined;
-  return (
-    <label className="w-full flex flex-col gap-1 text-xs opacity-70">
-      {label}
-      <input
-        type={type}
-        value={value}
-        onChange={(e) => {
-          setValue(e.target.value);
-          writeSetting(setting, e.target.value);
-        }}
-        placeholder={placeholder}
-        aria-invalid={invalid}
-        className="px-3 py-2 rounded-lg bg-aai-surface border border-aai-border text-sm outline-none focus:border-aai-primary"
-      />
-      {invalid && (
-        <span className="text-red-400">
-          Not a number texts can go to: add the country code, e.g. +1
-        </span>
-      )}
-    </label>
   );
 }
 

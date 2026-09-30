@@ -1,150 +1,111 @@
-import type { ConversationItem } from "@alexkroman1/aai-ui";
+import {
+  type ConversationItem,
+  type ConversationLogEntry,
+  useConversationLog,
+} from "@alexkroman1/aai-ui";
+import { useState } from "react";
 
-// Everything this page has said and heard, across sessions. The device's sessions are
-// short (a wake word, a few turns, FOLLOWUP_MS of quiet, hang up), so the live
-// conversation the SDK holds is only ever the current one; this keeps the rest.
-//
-// A resume replays the session's history (history.restored), so the live conversation is
-// never appended as it stands: that would log every earlier turn again. Each server
-// session is instead a CHAIN of entries whose items, end to end, are its conversation:
-// the chain is rewritten from the live list, and only what is new goes on the end, in
-// a new entry when something else (a note, a reminder arriving) was logged since. So the
-// log stays in the order things happened.
+// Everything this page has said and heard, across sessions: aai-ui's useConversationLog,
+// under a key of this page's own. The log this page kept itself before
+// (`aai-device:history`) is carried over into it once, so no one's history is lost.
 
-export type Item =
+export const LOG_KEY = "aai-device:log";
+const LEGACY_KEY = "aai-device:history";
+const MAX_ENTRIES = 300;
+
+/** The log, with the page's old one carried over first. Call once per page. */
+export function useHistory() {
+  // Before useConversationLog's own initializer, which reads LOG_KEY once on mount.
+  useState(() => migrateHistory(globalThis.localStorage));
+  return useConversationLog({ storageKey: LOG_KEY, max: MAX_ENTRIES });
+}
+
+type Store = Pick<Storage, "getItem" | "setItem" | "removeItem">;
+
+/** An item as the page stored it: args as a JSON string, a `done` flag. */
+type LegacyItem =
   | { kind: "message"; role: "user" | "assistant"; text: string }
   | { kind: "tool"; name: string; args: string; done: boolean };
 
-export type Entry =
-  /** `run` tells apart two conversations the server held under one id; see recordSession. */
-  | {
-      kind: "session";
-      sessionId: string;
-      run?: number;
-      at: number;
-      items: Item[];
-      /**
-       * Whose conversation it was: this browser's own, or the speaker it was linked to.
-       * Only a session of the page's CURRENT client can be continued from here; resuming
-       * one under another id would move it into that conversation.
-       */
-      clientId?: string;
-    }
-  | { kind: "note"; at: number; text: string }
-  /** What the speaker SAID on its own (a reminder, a finished job): the assistant's turn. */
-  | { kind: "spoken"; at: number; text: string };
-
-/** Oldest dropped first; localStorage holds a few MB per origin. */
-export const MAX_ENTRIES = 300;
-const STORAGE_KEY = "aai-device:history";
-
-export function toItems(items: readonly ConversationItem[]): Item[] {
-  return items.map((it) =>
-    it.kind === "message"
-      ? { kind: "message", role: it.message.role, text: it.message.content }
-      : {
-          kind: "tool",
-          name: it.toolCall.name,
-          args: JSON.stringify(it.toolCall.args),
-          done: it.toolCall.status === "done",
-        },
-  );
-}
-
-const same = (a: Item | undefined, b: Item | undefined) => JSON.stringify(a) === JSON.stringify(b);
-/** Whether two items are the same turn, ignoring a tool call going from pending to done. */
-const sameTurn = (a: Item | undefined, b: Item | undefined) =>
-  same(
-    a?.kind === "tool" ? { ...a, done: true } : a,
-    b?.kind === "tool" ? { ...b, done: true } : b,
-  );
-
-type SessionEntry = Extract<Entry, { kind: "session" }>;
-
 /**
- * The live conversation of `sessionId`, written into the history. It continues the
- * newest chain for that session when every turn they share matches, and starts a new
- * run otherwise: a session the server had already retired comes back under the same
- * id but empty, and must not overwrite what the old one said.
+ * Move the old `aai-device:history` into LOG_KEY in aai-ui's format, ahead of anything
+ * already there, and drop the old key. Entries it can't read are skipped, never thrown on.
+ * A storage that refuses (private mode) leaves both keys as they were.
  */
-export function recordSession(
-  history: readonly Entry[],
-  sessionId: string,
-  items: Item[],
-  now: number,
-  clientId?: string,
-): Entry[] {
-  if (items.length === 0) return [...history];
-  const mine = (e: Entry): e is SessionEntry => e.kind === "session" && e.sessionId === sessionId;
-  const run = history.findLast(mine)?.run ?? 0;
-  const chain = history.flatMap((e, i) => (mine(e) && (e.run ?? 0) === run ? [i] : []));
-  const stored = chain.flatMap((i) => (history[i] as SessionEntry).items);
-  // It continues the chain only if EVERY turn the two share matches. The first turn alone
-  // is not enough: a session the server lost comes back greeting, and the greeting is
-  // the first turn of the old one too.
-  const shared = Math.min(stored.length, items.length);
-  const continues =
-    chain.length > 0 && stored.slice(0, shared).every((it, k) => sameTurn(it, items[k]));
-  if (!continues) {
-    const entry: SessionEntry = {
-      kind: "session",
-      sessionId,
-      run: chain.length > 0 ? run + 1 : 0,
-      at: now,
-      items,
-      ...(clientId ? { clientId } : {}),
-    };
-    return trim([...history, entry]);
-  }
-  // Mid-reconnect, before the whole replay lands: nothing to learn, and nothing to shrink to.
-  if (items.length < stored.length) return [...history];
-
-  const next = [...history];
-  let offset = 0;
-  for (const i of chain) {
-    const e = next[i] as SessionEntry;
-    next[i] = { ...e, items: items.slice(offset, offset + e.items.length) };
-    offset += e.items.length;
-  }
-  const rest = items.slice(offset);
-  if (rest.length === 0) return next;
-  const tail = chain.at(-1) as number;
-  if (tail === next.length - 1) {
-    const e = next[tail] as SessionEntry;
-    next[tail] = { ...e, items: [...e.items, ...rest] };
-    return next;
-  }
-  return trim([
-    ...next,
-    { kind: "session", sessionId, run, at: now, items: rest, ...(clientId ? { clientId } : {}) },
-  ]);
-}
-
-export function addNote(history: readonly Entry[], text: string, now: number): Entry[] {
-  return trim([...history, { kind: "note", at: now, text }]);
-}
-
-export function addSpoken(history: readonly Entry[], text: string, now: number): Entry[] {
-  return trim([...history, { kind: "spoken", at: now, text }]);
-}
-
-function trim(history: Entry[]): Entry[] {
-  return history.length > MAX_ENTRIES ? history.slice(-MAX_ENTRIES) : history;
-}
-
-export function loadHistory(): Entry[] {
+export function migrateHistory(store: Store | undefined): void {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? (JSON.parse(raw) as Entry[]) : [];
+    const raw = store?.getItem(LEGACY_KEY);
+    if (!store || raw == null) return;
+    const old = parseArray(raw).flatMap((e) => {
+      const entry = convertEntry(e);
+      return entry ? [entry] : [];
+    });
+    const current = parseArray(store.getItem(LOG_KEY));
+    const merged = [...old, ...current].slice(-MAX_ENTRIES);
+    store.setItem(LOG_KEY, JSON.stringify(merged));
+    store.removeItem(LEGACY_KEY);
+  } catch {
+    // Quota or private mode: tried again on the next load.
+  }
+}
+
+function parseArray(raw: string | null): unknown[] {
+  if (!raw) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
   } catch {
     return [];
   }
 }
 
-export function saveHistory(history: readonly Entry[]): void {
+function convertEntry(raw: unknown): ConversationLogEntry | undefined {
+  if (typeof raw !== "object" || raw === null) return undefined;
+  const e = raw as Record<string, unknown>;
+  if (typeof e.at !== "number") return undefined;
+  if ((e.kind === "note" || e.kind === "spoken") && typeof e.text === "string")
+    return { kind: e.kind, at: e.at, text: e.text };
+  if (e.kind !== "session" || typeof e.sessionId !== "string" || !Array.isArray(e.items))
+    return undefined;
+  return {
+    kind: "session",
+    sessionId: e.sessionId,
+    run: typeof e.run === "number" ? e.run : 0,
+    at: e.at,
+    items: (e.items as LegacyItem[]).flatMap((it, i) => {
+      const item = convertItem(it, i);
+      return item ? [item] : [];
+    }),
+    ...(typeof e.clientId === "string" ? { clientId: e.clientId } : {}),
+  };
+}
+
+function convertItem(it: LegacyItem, i: number): ConversationItem | undefined {
+  if (it?.kind === "message" && typeof it.text === "string")
+    return { kind: "message", message: { id: i, role: it.role, content: it.text } };
+  if (it?.kind === "tool" && typeof it.name === "string")
+    return {
+      kind: "tool",
+      toolCall: {
+        callId: `legacy-${i}`,
+        name: it.name,
+        args: parseArgs(it.args),
+        status: it.done ? "done" : "pending",
+        seq: i,
+        afterMessageId: -1,
+      },
+    };
+  return undefined;
+}
+
+function parseArgs(args: unknown): Record<string, unknown> {
+  if (typeof args !== "string") return {};
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
+    const parsed: unknown = JSON.parse(args);
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
   } catch {
-    // Quota or private mode: the page still works, it just won't remember.
+    return {};
   }
 }
