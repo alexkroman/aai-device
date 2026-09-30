@@ -2,7 +2,7 @@ import { sessionClientId, tool } from "@alexkroman1/aai";
 import { remind } from "../shared.ts";
 
 // Every reminder set from this speaker is a run keyed by its client id, so "cancel my
-// reminders" is find-by-key and cancel whatever has not fired yet.
+// reminders" is cancelling every run under that key that has not fired yet.
 
 export default tool({
   description:
@@ -11,13 +11,6 @@ export default tool({
   async execute(_args, ctx) {
     const clientId = sessionClientId(ctx);
     if (!clientId) return { cancelled: 0 };
-    const runs = await ctx.workflows.find(remind, clientId);
-    let cancelled = 0;
-    for (const run of runs) {
-      if (run.status === "pending" || run.status === "running") {
-        if (await ctx.workflows.cancel(run.runId)) cancelled++;
-      }
-    }
-    return { cancelled };
+    return { cancelled: await ctx.workflows.cancelAll(remind, clientId) };
   },
 });

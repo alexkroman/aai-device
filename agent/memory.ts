@@ -1,4 +1,6 @@
 import { requireEnv } from "@alexkroman1/aai";
+import type { EnvContext } from "@alexkroman1/aai/step";
+import { jsonClient } from "@alexkroman1/aai/utils";
 
 // Long-term memory, held by the mem0 platform (https://docs.mem0.ai/api-reference). mem0
 // does the part that is hard to get right: given what was said, it decides which lasting
@@ -8,9 +10,6 @@ import { requireEnv } from "@alexkroman1/aai";
 // Everything in the home is ONE mem0 user, MEM0_USER_ID: there is no voice ID, so a fact
 // said to the kitchen speaker is the household's, and the browser twin reads the same
 // memories. Beside agent.ts because tools/ is flat and every file there must be a tool.
-// Plain fetch, because tool code runs in a worker that has fetch and nothing else.
-
-type Ctx = { env: Readonly<Partial<Record<string, string>>>; signal?: AbortSignal };
 
 export const MEM0_URL = "https://api.mem0.ai";
 /** Every speaker and browser in the home shares this mem0 user unless .env names another. */
@@ -37,25 +36,15 @@ export const MEMORY_EXCLUDES =
   "search, a reminder, going for a walk), passing moods, jokes and hypotheticals, and " +
   "anything they asked not to be remembered.";
 
-function user(ctx: Ctx): string {
+function user(ctx: EnvContext): string {
   return ctx.env.MEM0_USER_ID?.trim() || DEFAULT_MEM0_USER;
 }
 
-async function call<T>(ctx: Ctx, method: string, path: string, body?: unknown): Promise<T> {
-  const res = await fetch(`${MEM0_URL}${path}`, {
-    method,
-    headers: {
-      Authorization: `Token ${requireEnv(ctx, "MEM0_API_KEY")}`,
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    ...(ctx.signal ? { signal: ctx.signal } : {}),
-  });
-  const text = await res.text();
-  if (!res.ok) throw new Error(`mem0 ${res.status}: ${text.slice(0, 200)}`);
-  return (text ? JSON.parse(text) : {}) as T;
-}
+const call = jsonClient({
+  label: "mem0",
+  baseUrl: MEM0_URL,
+  headers: (env) => ({ Authorization: `Token ${requireEnv({ env }, "MEM0_API_KEY")}` }),
+});
 
 /**
  * Hand mem0 a conversation (or one sentence to keep) to extract memories from. It
@@ -63,7 +52,7 @@ async function call<T>(ctx: Ctx, method: string, path: string, body?: unknown): 
  * {@link addStatus} to know it finished.
  */
 export function addMemories(
-  ctx: Ctx,
+  ctx: EnvContext,
   messages: readonly Message[],
   opts: {
     metadata?: Record<string, string>;
@@ -86,13 +75,13 @@ export function addMemories(
 }
 
 /** Where a background add got to: PENDING, then SUCCEEDED or FAILED. */
-export async function addStatus(ctx: Ctx, eventId: string): Promise<string> {
+export async function addStatus(ctx: EnvContext, eventId: string): Promise<string> {
   const event = await call<{ status?: string }>(ctx, "GET", `/v1/event/${eventId}/`);
   return event.status ?? "PENDING";
 }
 
 /** Every memory held for the home, oldest first: the profile the agent starts each session with. */
-export async function allMemories(ctx: Ctx, pageSize = 200): Promise<Memory[]> {
+export async function allMemories(ctx: EnvContext, pageSize = 200): Promise<Memory[]> {
   const page = await call<{ results?: Memory[] }>(
     ctx,
     "POST",
@@ -103,7 +92,7 @@ export async function allMemories(ctx: Ctx, pageSize = 200): Promise<Memory[]> {
 }
 
 /** The memories closest to `query`, best first. */
-export async function searchMemories(ctx: Ctx, query: string, topK = 5): Promise<Memory[]> {
+export async function searchMemories(ctx: EnvContext, query: string, topK = 5): Promise<Memory[]> {
   const found = await call<{ results?: Memory[] }>(ctx, "POST", "/v3/memories/search/", {
     query,
     filters: { user_id: user(ctx) },
@@ -113,11 +102,11 @@ export async function searchMemories(ctx: Ctx, query: string, topK = 5): Promise
 }
 
 /** Rewrite one memory's text: an edit made in the page. */
-export async function updateMemory(ctx: Ctx, id: string, text: string): Promise<void> {
+export async function updateMemory(ctx: EnvContext, id: string, text: string): Promise<void> {
   await call(ctx, "PUT", `/v1/memories/${encodeURIComponent(id)}/`, { text });
 }
 
 /** Delete one memory by the id search or the profile gave it. */
-export async function forgetMemory(ctx: Ctx, id: string): Promise<void> {
+export async function forgetMemory(ctx: EnvContext, id: string): Promise<void> {
   await call(ctx, "DELETE", `/v1/memories/${encodeURIComponent(id)}/`);
 }

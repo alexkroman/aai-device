@@ -1,3 +1,6 @@
+import { sendToChannel, textbeltChannel } from "@alexkroman1/aai/channels";
+import type { EnvContext } from "@alexkroman1/aai/step";
+import { normalizePhone as toE164 } from "@alexkroman1/aai/utils";
 import { rest } from "./supabase.ts";
 
 // The household profile: the few exact facts tools act on, kept in the `profile` table
@@ -9,8 +12,6 @@ import { rest } from "./supabase.ts";
 // `phone` only when that code is read back (tools/confirm_phone.ts): the agent listens
 // on the LAN, so otherwise anyone who can open a session could point its texts at a
 // stranger's number.
-
-type Ctx = { env: Readonly<Partial<Record<string, string>>>; signal?: AbortSignal };
 
 /** The fields a person can set, and what each is for (shown to the model). */
 export const PROFILE_FIELDS = {
@@ -43,7 +44,7 @@ let refreshing: Promise<Profile> | undefined;
 const CACHE_MS = 30_000;
 
 /** The whole profile, fresh from the database. */
-export async function readProfile(ctx: Ctx): Promise<Profile> {
+export async function readProfile(ctx: EnvContext): Promise<Profile> {
   const rows = await rest<{ key: string; value: string }[]>(ctx, "/profile?select=key,value");
   cached = Object.fromEntries(rows.map((r) => [r.key, r.value])) as Profile;
   cachedAt = Date.now();
@@ -55,7 +56,7 @@ export async function readProfile(ctx: Ctx): Promise<Profile> {
  * every model step and so cannot wait on the database. A stale copy starts a refresh
  * for the next step. Tools never use this: they read fresh.
  */
-export function cachedProfile(ctx: Ctx): Profile {
+export function cachedProfile(ctx: EnvContext): Profile {
   if (Date.now() - cachedAt > CACHE_MS && !refreshing) {
     refreshing = readProfile({ env: ctx.env })
       .catch(() => cached)
@@ -68,7 +69,7 @@ export function cachedProfile(ctx: Ctx): Profile {
 
 /** Save fields, or delete the ones given as null. */
 export async function writeProfile(
-  ctx: Ctx,
+  ctx: EnvContext,
   fields: Partial<Record<keyof Profile, string | null>>,
 ): Promise<void> {
   const entries = Object.entries(fields);
@@ -112,15 +113,11 @@ export function describeProfile(profile: Profile): string {
 // --- Phone numbers ---------------------------------------------------------
 
 /**
- * E.164, or undefined when it can't be one. A bare 10-digit number is taken as US/Canada
- * (+1), the one assumption here: say the country code for anywhere else.
+ * E.164, or undefined when it can't be one. A number said without a country code is
+ * taken as US/Canada (+1), the one assumption here: say the country code for anywhere else.
  */
 export function normalizePhone(said: string): string | undefined {
-  const digits = said.replace(/[\s().-]/g, "");
-  if (/^\+\d{8,15}$/.test(digits)) return digits;
-  if (/^\d{10}$/.test(digits)) return `+1${digits}`;
-  if (/^1\d{10}$/.test(digits)) return `+${digits}`;
-  return undefined;
+  return toE164(said, { defaultCountry: "US" });
 }
 
 /** How a number is said back: only its last four digits. */
@@ -139,17 +136,10 @@ export async function sha256(text: string): Promise<string> {
 }
 
 /** Text via Textbelt; throws with Textbelt's own reason, which the model can say. */
-export async function sendText(ctx: Ctx, phone: string, message: string): Promise<void> {
+export async function sendText(ctx: EnvContext, phone: string, message: string): Promise<void> {
   const key = ctx.env.TEXTBELT_KEY;
   if (!key) throw new Error("Texting is not set up: TEXTBELT_KEY is missing from agent/.env");
-  const res = await fetch("https://textbelt.com/text", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ phone, message, key }),
-    ...(ctx.signal ? { signal: ctx.signal } : {}),
-  });
-  const body = (await res.json().catch(() => ({}))) as { success?: boolean; error?: string };
-  if (!res.ok || !body.success) throw new Error(body.error ?? `Textbelt HTTP ${res.status}`);
+  await sendToChannel(textbeltChannel({ key, to: phone, links: "strip" }), { text: message });
 }
 
 export type StartResult =
@@ -159,7 +149,7 @@ export type StartResult =
   | { status: "rate_limited" };
 
 /** Text a code to `said`, to be read back to `confirmPhone`. */
-export async function startPhoneVerification(ctx: Ctx, said: string): Promise<StartResult> {
+export async function startPhoneVerification(ctx: EnvContext, said: string): Promise<StartResult> {
   const phone = normalizePhone(said);
   if (!phone) return { status: "invalid" };
   if ((await readProfile(ctx)).phone === phone) return { status: "unchanged" };
@@ -203,7 +193,7 @@ export type ConfirmResult =
   | { status: "none_pending" };
 
 /** Check a code read back against the newest pending one; a match saves the number. */
-export async function confirmPhone(ctx: Ctx, code: string): Promise<ConfirmResult> {
+export async function confirmPhone(ctx: EnvContext, code: string): Promise<ConfirmResult> {
   const now = encodeURIComponent(new Date().toISOString());
   const [pending] = await rest<
     { id: number; phone: string; code_sha256: string; attempts: number }[]

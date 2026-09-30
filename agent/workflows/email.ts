@@ -1,8 +1,10 @@
 import type { WorkflowContext } from "@alexkroman1/aai";
-import { stepNotifyClient, stepSpeak } from "@alexkroman1/aai/step";
-import { stepAppsCtx } from "../apps.ts";
+import {
+  DEFAULT_CLIENT_DELIVERY_ATTEMPTS,
+  stepEnvContext,
+  stepSayOnClient,
+} from "@alexkroman1/aai/step";
 import { type EmailResult, emailHousehold } from "../email.ts";
-import { DELIVER_ATTEMPTS, NOTICE_SAMPLE_RATE } from "./remind.ts";
 
 // email_me's send: through Composio's Gmail (email.ts), which is round trips too slow to
 // hold a turn for, so a run. The agent already said it's on its way; the speaker only
@@ -18,26 +20,24 @@ export async function emailFlow(input: EmailInput, ctx: WorkflowContext) {
   if (!result.sent) {
     const { runId } = ctx;
     await ctx.step("announceFailure", () => announceFailure(runId, input, result.why), {
-      maxAttempts: DELIVER_ATTEMPTS,
+      maxAttempts: DEFAULT_CLIENT_DELIVERY_ATTEMPTS,
     });
   }
   return result;
 }
 
 export async function send(input: EmailInput): Promise<EmailResult> {
-  return await emailHousehold(stepAppsCtx(), input.clientId, {
+  return await emailHousehold(stepEnvContext(), input.clientId, {
     subject: input.subject,
     body: input.body,
   });
 }
 
 export async function announceFailure(id: string, input: EmailInput, why: string): Promise<void> {
-  const said = `I couldn't email you "${input.subject}". ${why}`;
-  const spoken = await stepSpeak(said, { sampleRate: NOTICE_SAMPLE_RATE });
-  await stepNotifyClient(input.clientId, {
+  await stepSayOnClient(input.clientId, {
     id: `${id}:failed`,
     event: "email",
-    data: { said, failed: true },
-    audio: spoken.pcm,
+    text: `I couldn't email you "${input.subject}". ${why}`,
+    data: { failed: true },
   });
 }

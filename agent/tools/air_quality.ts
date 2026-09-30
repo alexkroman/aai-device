@@ -1,7 +1,8 @@
 import { tool, toolFailure } from "@alexkroman1/aai";
+import { fetchJson } from "@alexkroman1/aai/tools";
 import { isToolFailure } from "@alexkroman1/aai/utils";
 import { z } from "zod";
-import { googleError, locate, locationField } from "../google.ts";
+import { locate, locationField } from "../google.ts";
 
 // Google's Air Quality API, on the `google_places` key (the project needs the
 // Air Quality API enabled). Current conditions only.
@@ -39,19 +40,19 @@ export default tool({
     const at = await locate(location, ctx);
     if (isToolFailure(at)) return at;
 
-    const res = await fetch("https://airquality.googleapis.com/v1/currentConditions:lookup", {
+    const res = await fetchJson("https://airquality.googleapis.com/v1/currentConditions:lookup", {
       method: "POST",
-      headers: { "content-type": "application/json", "x-goog-api-key": at.key },
-      body: JSON.stringify({
+      headers: { "x-goog-api-key": at.key },
+      body: {
         location: { latitude: at.latitude, longitude: at.longitude },
         // LOCAL_AQI adds the region's own scale (US EPA here) beside Google's universal one.
         extraComputations: ["LOCAL_AQI", "HEALTH_RECOMMENDATIONS"],
         languageCode: "en",
-      }),
+      },
       signal: ctx.signal,
     });
-    if (!res.ok) return toolFailure(`Air quality lookup failed: ${await googleError(res)}`);
-    const air = AirResponse.parse(await res.json());
+    if (isToolFailure(res)) return toolFailure(`Air quality lookup failed: ${res.error}`);
+    const air = AirResponse.parse(res);
     // The local index is the number people know (US AQI); universal is the fallback.
     const index = air.indexes?.find((i) => i.code !== "uaqi") ?? air.indexes?.[0];
     if (!index) return toolFailure("No air quality data for that place.");

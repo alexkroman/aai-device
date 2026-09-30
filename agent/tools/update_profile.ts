@@ -1,5 +1,5 @@
 import { tool, toolFailure } from "@alexkroman1/aai";
-import { isToolFailure } from "@alexkroman1/aai/utils";
+import { errorMessage, isToolFailure } from "@alexkroman1/aai/utils";
 import { z } from "zod";
 import { geocode } from "../google.ts";
 import {
@@ -62,7 +62,7 @@ export default tool({
     }
 
     const started = await startPhoneVerification(ctx, said).catch((err: unknown) =>
-      toolFailure(`Could not text a code: ${err instanceof Error ? err.message : String(err)}`),
+      toolFailure(`Could not text a code: ${errorMessage(err)}`),
     );
     if (isToolFailure(started)) return started;
     switch (started.status) {

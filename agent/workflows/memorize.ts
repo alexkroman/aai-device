@@ -1,5 +1,5 @@
 import type { WorkflowContext } from "@alexkroman1/aai";
-import { requireStepEnv, stepClientTranscript, stepEnv } from "@alexkroman1/aai/step";
+import { stepClientTranscript, stepEnvContext, stepPollUntil } from "@alexkroman1/aai/step";
 import { stepGenerateJsonOrFail } from "@alexkroman1/aai/step-errors";
 import { z } from "zod";
 import { addMemories, addStatus, type Message } from "../memory.ts";
@@ -19,7 +19,7 @@ import { DIGEST_SYSTEM, FOLD_SYSTEM } from "./memorize-prompts.ts";
 // The history is written before mem0 is called, so a mem0 outage (or no key yet) costs
 // the facts of this session and never the speaker's own record of what was said.
 //
-// Idempotent per (session, watermark): the run key is both, a replay of `mem0` is a
+// Idempotent per (session, watermark): the start is deduped on both, a replay of `mem0` is a
 // restatement mem0 merges, and a digest is an upsert.
 
 export type MemorizeInput = { clientId: string; sessionId: string; throughEvent: number };
@@ -55,7 +55,7 @@ type Turns = { startedAt: string; messages: Message[]; digestSoFar?: string };
 /** The session's spoken turns past what an earlier run already digested. */
 async function newTurns({ clientId, sessionId }: MemorizeInput): Promise<Turns> {
   const held = await rest<{ through_event: number; digest: string }[]>(
-    env(),
+    stepEnvContext(),
     `/conversation_digests?client_id=eq.${enc(clientId)}&session_id=eq.${enc(sessionId)}` +
       "&select=through_event,digest",
   );
@@ -76,21 +76,20 @@ async function newTurns({ clientId, sessionId }: MemorizeInput): Promise<Turns> 
 
 /** Hand the turns to mem0 and wait for its extraction, so a FAILED one is retried here. */
 async function sendToMem0({ clientId, sessionId }: MemorizeInput, turns: Turns): Promise<string> {
-  const { event_id } = await addMemories(mem0Env(), turns.messages, {
+  const { event_id } = await addMemories(stepEnvContext(), turns.messages, {
     metadata: { source: "conversation", session_id: sessionId, client_id: clientId },
     observedAt: new Date(turns.startedAt),
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   });
   if (!event_id) return "SUCCEEDED";
-  const until = Date.now() + MEM0_WAIT_MS;
-  while (Date.now() < until) {
-    const status = await addStatus(mem0Env(), event_id);
-    if (status === "SUCCEEDED") return status;
-    if (status === "FAILED") throw new Error(`mem0 could not extract from ${sessionId}`);
-    await new Promise((r) => setTimeout(r, MEM0_POLL_MS));
-  }
+  const { value: status, done } = await stepPollUntil(() => addStatus(stepEnvContext(), event_id), {
+    everyMs: MEM0_POLL_MS,
+    maxMs: MEM0_WAIT_MS,
+    done: (reading) => reading === "SUCCEEDED" || reading === "FAILED",
+  });
+  if (status === "FAILED") throw new Error(`mem0 could not extract from ${sessionId}`);
   // Still PENDING: mem0 holds the job and will finish it; a retry would only queue it twice.
-  return "PENDING";
+  return done ? status : "PENDING";
 }
 
 async function writeDigest(input: MemorizeInput, turns: Turns): Promise<void> {
@@ -114,7 +113,7 @@ async function writeDigest(input: MemorizeInput, turns: Turns): Promise<void> {
       schema: DigestReply,
     },
   );
-  await rest(env(), "/conversation_digests?on_conflict=client_id,session_id", {
+  await rest(stepEnvContext(), "/conversation_digests?on_conflict=client_id,session_id", {
     method: "POST",
     prefer: "resolution=merge-duplicates",
     body: {
@@ -130,13 +129,13 @@ async function writeDigest(input: MemorizeInput, turns: Turns): Promise<void> {
 /** Past MAX_DIGESTS, fold all but the newest KEEP_DIGESTS into the rolling summary. */
 async function foldOldDigests(clientId: string): Promise<number> {
   const digests = await rest<{ started_at: string; digest: string }[]>(
-    env(),
+    stepEnvContext(),
     `/conversation_digests?client_id=eq.${enc(clientId)}&digest=neq.&select=started_at,digest&order=started_at.asc`,
   );
   if (digests.length <= MAX_DIGESTS) return 0;
   const old = digests.slice(0, digests.length - KEEP_DIGESTS);
   const prior = await rest<{ summary: string }[]>(
-    env(),
+    stepEnvContext(),
     `/older_history?client_id=eq.${enc(clientId)}&select=summary`,
   );
   const { summary } = await stepGenerateJsonOrFail(
@@ -146,7 +145,7 @@ async function foldOldDigests(clientId: string): Promise<number> {
     ].join("\n\n"),
     { system: FOLD_SYSTEM, schema: FoldReply },
   );
-  await rest(env(), "/rpc/fold_older_history", {
+  await rest(stepEnvContext(), "/rpc/fold_older_history", {
     method: "POST",
     body: {
       p_client_id: clientId,
@@ -158,19 +157,3 @@ async function foldOldDigests(clientId: string): Promise<number> {
 }
 
 const enc = encodeURIComponent;
-
-/** A step has no ctx.env: what supabase.ts and memory.ts read, from the step's env. */
-function env() {
-  return {
-    env: {
-      SUPABASE_URL: requireStepEnv("SUPABASE_URL"),
-      SUPABASE_SECRET_KEY: requireStepEnv("SUPABASE_SECRET_KEY"),
-    },
-  };
-}
-
-function mem0Env() {
-  return {
-    env: { MEM0_API_KEY: requireStepEnv("MEM0_API_KEY"), MEM0_USER_ID: stepEnv("MEM0_USER_ID") },
-  };
-}

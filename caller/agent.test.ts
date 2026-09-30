@@ -1,13 +1,17 @@
 /** The def a DEPLOYED agent runs: authored, plus `tools/` and `system-prompt.md`. */
 import deployedDef from "virtual:aai/agent";
 import {
+  createStubWorkflows,
   createToolContext,
   endSessionCalls,
   expectDeployable,
+  type FetchRouteHandler,
   runTool,
+  type StubStepAnswer,
   toolInputIssues,
 } from "@alexkroman1/aai/testing";
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { installFetchRoutes } from "@alexkroman1/aai/testing/vitest";
+import { describe, expect, test, vi } from "vitest";
 import agentDef from "./agent.ts";
 import { type CallTask, callGreeting, taskInstructions } from "./call.ts";
 import endCall from "./tools/end_call.ts";
@@ -19,12 +23,11 @@ const env = { SUPABASE_URL: "http://supabase.test", SUPABASE_SECRET_KEY: "sb-tes
 const signal = new AbortController().signal;
 const sessionContext = agentDef.sessionContext as NonNullable<typeof agentDef.sessionContext>;
 
-function supabaseAnswers(rows: unknown[]) {
-  const fetch = vi.fn(async () => new Response(JSON.stringify(rows), { status: 200 }));
-  vi.stubGlobal("fetch", fetch);
-  return fetch;
+/** Supabase answering every request with `answer` (rows, or a whole reply). */
+function supabase(answer: FetchRouteHandler | StubStepAnswer) {
+  return installFetchRoutes({ "supabase.test": answer });
 }
-afterEach(() => vi.unstubAllGlobals());
+const supabaseAnswers = (rows: unknown[]) => supabase({ body: rows });
 
 describe("the calling agent", () => {
   test("is deployable, answers Twilio, and has only its own two tools", () => {
@@ -37,7 +40,7 @@ describe("the calling agent", () => {
   });
 
   test("refuses a session that isn't a placed call, without touching the database", async () => {
-    const fetch = supabaseAnswers([]);
+    const net = supabaseAnswers([]);
     expect(await sessionContext({ sessionId: "s1", env, signal })).toEqual({
       refuse: "not a placed call",
     });
@@ -49,7 +52,7 @@ describe("the calling agent", () => {
         call: { carrier: "twilio", parameters: {} },
       }),
     ).toEqual({ refuse: "not a placed call" });
-    expect(fetch).not.toHaveBeenCalled();
+    expect(net.hits).toEqual([]);
   });
 
   test("refuses a call id nobody approved, and one it cannot check", async () => {
@@ -58,14 +61,14 @@ describe("the calling agent", () => {
     expect(await sessionContext({ sessionId: "s1", env, signal, call })).toEqual({
       refuse: "no approved call with that id",
     });
-    vi.stubGlobal("fetch", async () => new Response("down", { status: 503 }));
+    supabase({ status: 503, body: "down" });
     expect(await sessionContext({ sessionId: "s1", env, signal, call })).toEqual({
       refuse: "could not load the call",
     });
   });
 
   test("an approved call becomes the session's task, claimed for this session", async () => {
-    const fetch = supabaseAnswers([
+    const net = supabaseAnswers([
       {
         id: "call_1",
         callee: "Luigi's",
@@ -85,10 +88,10 @@ describe("the calling agent", () => {
       "Hi, this is an AI assistant calling on behalf of Sam. Do you have a moment?",
     );
     expect(ctx.instructions).toContain("any time 6:30-7:30");
-    const [url, init] = fetch.mock.calls[0] as unknown as [string, RequestInit];
-    expect(url).toContain("status=in.(dialing,approved)");
-    expect(url).toContain("call_session_id=is.null");
-    expect(JSON.parse(String(init.body))).toEqual({ status: "in_progress", call_session_id: "s1" });
+    const [claim] = net.hits;
+    expect(claim?.url).toContain("status=in.(dialing,approved)");
+    expect(claim?.url).toContain("call_session_id=is.null");
+    expect(claim?.json).toEqual({ status: "in_progress", call_session_id: "s1" });
   });
 
   test("it speaks first, disclosing it is an AI, and the task then names the owner", () => {
@@ -114,16 +117,8 @@ describe("the calling agent", () => {
 
 // Everything below talks to one stubbed Supabase and reads back the requests it got.
 type Sent = { url: string; method: string; headers: Record<string, string>; body: unknown };
-function requests(fetch: ReturnType<typeof vi.fn>): Sent[] {
-  return fetch.mock.calls.map((args) => {
-    const [url, init] = args as unknown as [string, RequestInit];
-    return {
-      url,
-      method: String(init.method),
-      headers: init.headers as Record<string, string>,
-      body: init.body === undefined ? undefined : JSON.parse(String(init.body)),
-    };
-  });
+function requests(net: ReturnType<typeof installFetchRoutes>): Sent[] {
+  return net.hits.map(({ url, method, headers, json }) => ({ url, method, headers, body: json }));
 }
 
 const luigis: CallTask = {
@@ -139,9 +134,10 @@ const twilioCall = (id: string) => ({ carrier: "twilio", callId: "CA1", paramete
 
 describe("claiming a call (sessionContext)", () => {
   test("claims with one conditional PATCH, so there is no read-then-write window", async () => {
-    const fetch = supabaseAnswers([luigis]);
+    const net = supabaseAnswers([luigis]);
+    const fetch = vi.spyOn(globalThis, "fetch");
     await sessionContext({ sessionId: "s1", env, signal, call: twilioCall("call_1") });
-    expect(requests(fetch)).toEqual([
+    expect(requests(net)).toEqual([
       {
         url:
           "http://supabase.test/rest/v1/calls?id=eq.call_1&status=in.(dialing,approved)&call_session_id=is.null" +
@@ -157,16 +153,16 @@ describe("claiming a call (sessionContext)", () => {
       },
     ]);
     // The session's abort reaches the request: a caller who hangs up mid-claim cancels it.
-    expect((fetch.mock.calls[0] as unknown as [string, RequestInit])[1].signal).toBe(signal);
+    expect(fetch.mock.calls[0]?.[1]?.signal).toBe(signal);
   });
 
   test("a call id can't smuggle PostgREST filters past the status check", async () => {
-    const fetch = supabaseAnswers([]);
+    const net = supabaseAnswers([]);
     const evil = "call_1&status=in.(draft,ended)&call_session_id=not.is.null";
     expect(await sessionContext({ sessionId: "s1", env, signal, call: twilioCall(evil) })).toEqual({
       refuse: "no approved call with that id",
     });
-    const [sent] = requests(fetch);
+    const [sent] = requests(net);
     expect(sent?.url).toContain(`id=eq.${encodeURIComponent(evil)}&status=in.(dialing,approved)`);
     expect(sent?.url.match(/&status=/g)).toHaveLength(1);
   });
@@ -177,12 +173,7 @@ describe("claiming a call (sessionContext)", () => {
     ["a draft or ended call, or one already claimed (no rows match)", []],
     ["an empty body", null],
   ])("refuses %s", async (_what, rows) => {
-    if (rows === null)
-      vi.stubGlobal(
-        "fetch",
-        vi.fn(async () => new Response("", { status: 200 })),
-      );
-    else supabaseAnswers(rows);
+    supabase(rows === null ? { status: 200 } : { body: rows });
     const answer = await sessionContext({
       sessionId: "s2",
       env,
@@ -194,13 +185,8 @@ describe("claiming a call (sessionContext)", () => {
   });
 
   test("of two sessions racing for one call, only the one Supabase hands the row to talks", async () => {
-    const fetch = vi.fn(
-      async () =>
-        new Response(JSON.stringify(fetch.mock.calls.length === 1 ? [luigis] : []), {
-          status: 200,
-        }),
-    );
-    vi.stubGlobal("fetch", fetch);
+    let claims = 0;
+    const net = supabase(() => ({ body: ++claims === 1 ? [luigis] : [] }));
     const [first, second] = await Promise.all([
       sessionContext({ sessionId: "s1", env, signal, call: twilioCall("call_1") }),
       sessionContext({ sessionId: "s2", env, signal, call: twilioCall("call_1") }),
@@ -208,7 +194,7 @@ describe("claiming a call (sessionContext)", () => {
     expect(first).toHaveProperty("instructions");
     expect(second).toEqual({ refuse: "no approved call with that id" });
     expect(
-      requests(fetch).map((r) => [
+      requests(net).map((r) => [
         r.method,
         (r.body as { call_session_id: string }).call_session_id,
       ]),
@@ -218,12 +204,17 @@ describe("claiming a call (sessionContext)", () => {
     ]);
   });
 
-  test.each([
-    ["the network is down", () => Promise.reject(new TypeError("fetch failed"))],
-    ["Supabase answers 401", async () => new Response("bad key", { status: 401 })],
-    ["Supabase answers garbage", async () => new Response("<html>", { status: 200 })],
+  test.each<[string, FetchRouteHandler]>([
+    [
+      "the network is down",
+      () => {
+        throw new TypeError("fetch failed");
+      },
+    ],
+    ["Supabase answers 401", () => new Response("bad key", { status: 401 })],
+    ["Supabase answers garbage", () => new Response("<html>", { status: 200 })],
   ])("refuses when %s", async (_what, answer) => {
-    vi.stubGlobal("fetch", vi.fn(answer));
+    supabase(answer);
     expect(
       await sessionContext({ sessionId: "s1", env, signal, call: twilioCall("call_1") }),
     ).toEqual({
@@ -232,7 +223,7 @@ describe("claiming a call (sessionContext)", () => {
   });
 
   test("refuses, without a request, when Supabase isn't configured", async () => {
-    const fetch = supabaseAnswers([luigis]);
+    const net = supabaseAnswers([luigis]);
     for (const partial of [
       {},
       { SUPABASE_URL: env.SUPABASE_URL },
@@ -244,14 +235,14 @@ describe("claiming a call (sessionContext)", () => {
         refuse: "could not load the call",
       });
     }
-    expect(fetch).not.toHaveBeenCalled();
+    expect(net.hits).toEqual([]);
   });
 
   test("tolerates a trailing slash on SUPABASE_URL", async () => {
-    const fetch = supabaseAnswers([luigis]);
+    const net = supabaseAnswers([luigis]);
     const slashed = { ...env, SUPABASE_URL: "http://supabase.test//" };
     await sessionContext({ sessionId: "s1", env: slashed, signal, call: twilioCall("call_1") });
-    expect(requests(fetch)[0]?.url).toMatch(/^http:\/\/supabase\.test\/rest\/v1\/calls\?/);
+    expect(requests(net)[0]?.url).toMatch(/^http:\/\/supabase\.test\/rest\/v1\/calls\?/);
   });
 
   test("an unnamed owner still gets the disclosure, with a neutral stand-in", async () => {
@@ -359,12 +350,12 @@ describe("report_outcome", () => {
   const outcome = "Booked a table for 4 at 7:15 tonight under Sam; they hold it 15 minutes.";
 
   test("writes the outcome onto this session's call, and only that", async () => {
-    const fetch = supabaseAnswers([]);
+    const net = supabaseAnswers([]);
     const ctx = createToolContext({ env, sessionId: "s1" });
     expect(await runTool(deployedDef, "report_outcome", { outcome }, ctx)).toEqual({
       recorded: true,
     });
-    expect(requests(fetch)).toEqual([
+    expect(requests(net)).toEqual([
       {
         url: "http://supabase.test/rest/v1/calls?call_session_id=eq.s1",
         method: "PATCH",
@@ -381,24 +372,21 @@ describe("report_outcome", () => {
   });
 
   test("the session id is encoded into the filter", async () => {
-    const fetch = supabaseAnswers([]);
+    const net = supabaseAnswers([]);
     await runTool(
       deployedDef,
       "report_outcome",
       { outcome },
       createToolContext({ env, sessionId: "s 1&x=y" }),
     );
-    expect(requests(fetch)[0]?.url).toBe(
+    expect(requests(net)[0]?.url).toBe(
       "http://supabase.test/rest/v1/calls?call_session_id=eq.s%201%26x%3Dy",
     );
   });
 
   // A failed write must surface as a tool error, so the model doesn't tell the callee it's noted.
   test("fails loudly when the write fails or Supabase isn't configured", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => new Response("down", { status: 503 })),
-    );
+    supabase({ status: 503, body: "down" });
     await expect(
       runTool(
         deployedDef,
@@ -430,12 +418,12 @@ describe("report_outcome", () => {
 
 describe("end_call", () => {
   test("hangs up after the reply is spoken, once, and touches nothing else", async () => {
-    const fetch = supabaseAnswers([]);
+    const net = supabaseAnswers([]);
     const ctx = createToolContext({ env, sessionId: "s1" });
     expect(await runTool(deployedDef, "end_call", {}, ctx)).toEqual({ ending: true });
     expect(endSessionCalls(ctx)).toEqual([{ afterReply: true }]);
     expect(ctx.sent).toEqual([]);
-    expect(fetch).not.toHaveBeenCalled();
+    expect(net.hits).toEqual([]);
   });
 
   test("its description orders report_outcome first and covers voicemail and do-not-call", () => {
@@ -453,11 +441,11 @@ describe("the transcript and the end of the call", () => {
   const ctx = { env, sessionId: "s1" };
 
   test("each committed turn is appended as it is said, the callee as 'them'", async () => {
-    const fetch = supabaseAnswers([]);
+    const net = supabaseAnswers([]);
     on("user-transcript.committed")({ text: "Luigi's, how can I help?" }, ctx);
     on("agent-transcript.committed")({ text: "I'd like a table for 4.", recovery: false }, ctx);
-    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
-    expect(requests(fetch).map(({ url, method, body }) => ({ url, method, body }))).toEqual([
+    await vi.waitFor(() => expect(net.hits).toHaveLength(2));
+    expect(requests(net).map(({ url, method, body }) => ({ url, method, body }))).toEqual([
       {
         url: "http://supabase.test/rest/v1/rpc/append_call_turn",
         method: "POST",
@@ -472,35 +460,39 @@ describe("the transcript and the end of the call", () => {
   });
 
   test("a recovery line the agent said to cover an error is not written down", async () => {
-    const fetch = supabaseAnswers([]);
+    const net = supabaseAnswers([]);
     on("agent-transcript.committed")(
       { text: "Sorry, could you say that again?", recovery: true },
       ctx,
     );
     await new Promise((r) => setTimeout(r, 0));
-    expect(fetch).not.toHaveBeenCalled();
+    expect(net.hits).toEqual([]);
   });
 
   // Fire-and-forget: a Supabase hiccup must not become an unhandled rejection mid-call.
   test("a failed append doesn't throw into the call", async () => {
-    const fetch = vi.fn(async () => {
+    let tried = 0;
+    supabase(() => {
+      tried++;
       throw new TypeError("fetch failed");
     });
-    vi.stubGlobal("fetch", fetch);
     expect(() => on("user-transcript.committed")({ text: "Hello?" }, ctx)).not.toThrow();
     expect(() =>
       on("user-transcript.committed")({ text: "Hello?" }, { env: {}, sessionId: "s1" }),
     ).not.toThrow();
-    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(tried).toBe(1));
   });
 
   test("the session's end marks its call ended, with a timestamp", async () => {
-    const fetch = supabaseAnswers([]);
+    const net = supabaseAnswers([]);
     const before = Date.now();
-    await agentDef.onSessionEnd?.({ sessionId: "s1", env } as unknown as Parameters<
-      NonNullable<typeof agentDef.onSessionEnd>
-    >[0]);
-    const [sent] = requests(fetch);
+    await agentDef.onSessionEnd?.({
+      sessionId: "s1",
+      env,
+      workflows: createStubWorkflows(),
+      lastEventIndex: 0,
+    });
+    const [sent] = requests(net);
     expect(sent?.url).toBe("http://supabase.test/rest/v1/calls?call_session_id=eq.s1");
     expect(sent?.method).toBe("PATCH");
     const body = sent?.body as { status: string; ended_at: string };

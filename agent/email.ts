@@ -1,3 +1,4 @@
+import type { EnvContext } from "@alexkroman1/aai/step";
 import { CONNECT_HINT, runAction } from "./apps.ts";
 import { readProfile } from "./profile.ts";
 
@@ -5,8 +6,6 @@ import { readProfile } from "./profile.ts";
 // sent FROM the speaker's connected Gmail through Composio (apps.ts): no mail provider
 // of our own, and it arrives from an account they know. Unlike a text it can carry links,
 // so it is where anything with a URL, or too long for a text, goes.
-
-type Ctx = { env: Readonly<Partial<Record<string, string>>>; signal?: AbortSignal };
 
 /** Composio's Gmail send action (its schema: recipient_email, subject, body, is_html). */
 export const GMAIL_SEND = "GMAIL_SEND_EMAIL";
@@ -17,7 +16,7 @@ export type EmailResult = { sent: true; to: string } | { sent: false; why: strin
 
 /** Email `subject` and `body` to the saved address, from the speaker's Gmail. */
 export async function emailHousehold(
-  ctx: Ctx,
+  ctx: EnvContext,
   user: string,
   mail: { subject: string; body: string },
 ): Promise<EmailResult> {

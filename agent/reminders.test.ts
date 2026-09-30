@@ -1,16 +1,20 @@
+import { DEFAULT_CLIENT_DELIVERY_ATTEMPTS } from "@alexkroman1/aai/step";
 import {
-  createStubWorkflows,
+  createRunSnapshot,
   createToolContext,
   createWorkflowContext,
   runTool,
-  stubClientInbox,
-  stubSpeech,
 } from "@alexkroman1/aai/testing";
+import {
+  installStubClientInbox,
+  installStubSpeech,
+  installStubWorkflows,
+} from "@alexkroman1/aai/testing/vitest";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { MAX_REMINDER_MS, remind, reminderDueAt, spokenDue } from "./shared.ts";
 import cancelReminders from "./tools/cancel_reminders.ts";
 import remindMe from "./tools/remind_me.ts";
-import { DELIVER_ATTEMPTS, deliver, NOTICE_SAMPLE_RATE, remindFlow } from "./workflows/remind.ts";
+import { deliver, remindFlow } from "./workflows/remind.ts";
 
 // 2026-09-28 14:00 local: the agent's clock is the home's.
 const NOW = new Date(2026, 8, 28, 14, 0, 0);
@@ -46,14 +50,11 @@ describe("remind_me", () => {
 
   test("starts a run for this speaker, keyed by its client id so cancel can find it", async () => {
     vi.useFakeTimers({ now: NOW, toFake: ["Date"] });
-    const start = vi.fn(async () => "wrun_1");
-    const ctx = createToolContext({
-      clientId: "kitchen",
-      workflows: createStubWorkflows({ start }),
-    });
+    const workflows = installStubWorkflows({ runId: "wrun_1" });
+    const ctx = createToolContext({ clientId: "kitchen", workflows });
     const result = await runTool(remindMe, { text: "call the plumber", at: "17:00" }, ctx);
     expect(result).toEqual({ scheduled: true, text: "call the plumber", due: "5:00 PM" });
-    expect(start).toHaveBeenCalledWith(
+    expect(workflows.start).toHaveBeenCalledWith(
       remind,
       { clientId: "kitchen", text: "call the plumber", dueAt: new Date(2026, 8, 28, 17).getTime() },
       { key: "kitchen", label: expect.stringMatching(/ · due /) },
@@ -61,88 +62,69 @@ describe("remind_me", () => {
   });
 
   test("a session with no client id (a browser tab) cannot take one", async () => {
-    const start = vi.fn(async () => "wrun_1");
-    const ctx = createToolContext({ workflows: createStubWorkflows({ start }) });
+    const workflows = installStubWorkflows();
+    const ctx = createToolContext({ workflows });
     const result = await runTool(remindMe, { text: "x", in_seconds: 60 }, ctx);
     expect(result).toHaveProperty("error");
-    expect(start).not.toHaveBeenCalled();
+    expect(workflows.start).not.toHaveBeenCalled();
   });
 
   test("no usable time, or more than a week away, is refused", async () => {
-    const start = vi.fn(async () => "wrun_1");
-    const ctx = createToolContext({ clientId: "k", workflows: createStubWorkflows({ start }) });
+    const workflows = installStubWorkflows();
+    const ctx = createToolContext({ clientId: "k", workflows });
     expect(await runTool(remindMe, { text: "x", at: "five" }, ctx)).toHaveProperty("error");
     const tooFar = MAX_REMINDER_MS / 1000 + 1;
     expect(await runTool(remindMe, { text: "x", in_seconds: tooFar }, ctx)).toHaveProperty("error");
-    expect(start).not.toHaveBeenCalled();
+    expect(workflows.start).not.toHaveBeenCalled();
   });
 });
 
 describe("cancel_reminders", () => {
   test("cancels this speaker's reminders that have not fired, and counts them", async () => {
-    const find = vi.fn(async () => [
-      { runId: "a", workflow: "remind", createdAt: 1, status: "running" as const },
-      { runId: "b", workflow: "remind", createdAt: 2, status: "pending" as const },
-      { runId: "c", workflow: "remind", createdAt: 3, status: "completed" as const, output: {} },
-    ]);
-    const cancel = vi.fn(async () => true);
-    const ctx = createToolContext({
-      clientId: "kitchen",
-      workflows: createStubWorkflows({ find, cancel }),
+    const workflows = installStubWorkflows({
+      runs: [
+        createRunSnapshot({ runId: "a", workflow: "remind", status: "running" }),
+        createRunSnapshot({ runId: "b", workflow: "remind", status: "pending" }),
+        createRunSnapshot({ runId: "c", workflow: "remind", status: "completed", output: {} }),
+      ],
     });
+    const ctx = createToolContext({ clientId: "kitchen", workflows });
     expect(await runTool(cancelReminders, {}, ctx)).toEqual({ cancelled: 2 });
-    expect(find).toHaveBeenCalledWith(remind, "kitchen");
-    expect(cancel.mock.calls).toEqual([["a"], ["b"]]);
+    expect(workflows.cancelAll).toHaveBeenCalledWith(remind, "kitchen");
   });
 });
 
 describe("the remind workflow", () => {
-  afterEach(() => vi.unstubAllEnvs());
-
   test("sleeps until it is due, then delivers in one retried step", async () => {
     const dueAt = NOW.getTime() + 60_000;
     const ctx = createWorkflowContext({ runSteps: false });
     await remindFlow({ clientId: "kitchen", text: "flip the laundry", dueAt }, ctx);
     expect(ctx.slept).toEqual([{ label: "due", until: new Date(dueAt) }]);
-    expect(ctx.steps).toEqual([{ name: "deliver", maxAttempts: DELIVER_ATTEMPTS }]);
+    expect(ctx.steps).toEqual([{ name: "deliver", maxAttempts: DEFAULT_CLIENT_DELIVERY_ATTEMPTS }]);
   });
 
-  test("deliver speaks the reminder at the board's rate and pushes it under the run id", async () => {
-    vi.stubEnv("ASSEMBLYAI_API_KEY", "test-key");
-    const speech = stubSpeech({ pcmBytes: 3200 });
-    const inbox = stubClientInbox();
-    try {
-      await deliver("wrun_7", { clientId: "kitchen", text: "flip the laundry", dueAt: 0 });
-      expect(speech.calls).toMatchObject([
-        { text: "Reminder: flip the laundry", sampleRate: NOTICE_SAMPLE_RATE },
-      ]);
-      expect(inbox.calls).toHaveLength(1);
-      const [{ clientId, notice }] = inbox.calls as [(typeof inbox.calls)[number]];
-      expect(clientId).toBe("kitchen");
-      expect(notice).toMatchObject({
-        id: "wrun_7",
-        event: "reminder",
-        // `said` is what the page shows as the speaker's turn: the words it spoke.
-        data: { text: "flip the laundry", said: "Reminder: flip the laundry" },
-      });
-      expect(notice.audio?.length).toBe(3200);
-    } finally {
-      speech.restore();
-      inbox.restore();
-    }
+  test("deliver says the reminder on the speaker under the run id", async () => {
+    const speech = installStubSpeech({ pcmBytes: 3200 });
+    const inbox = installStubClientInbox();
+    await deliver("wrun_7", { clientId: "kitchen", text: "flip the laundry", dueAt: 0 });
+    expect(speech.calls).toMatchObject([{ text: "Reminder: flip the laundry" }]);
+    expect(inbox.calls).toHaveLength(1);
+    const [{ clientId, notice }] = inbox.calls as [(typeof inbox.calls)[number]];
+    expect(clientId).toBe("kitchen");
+    expect(notice).toMatchObject({
+      id: "wrun_7",
+      event: "reminder",
+      // `said` is what the page shows as the speaker's turn: the words it spoke.
+      data: { text: "flip the laundry", said: "Reminder: flip the laundry" },
+    });
+    expect(notice.audio?.length).toBe(3200);
   });
 
   test("a speaker that is busy fails the attempt as retryable, so the step redelivers", async () => {
-    vi.stubEnv("ASSEMBLYAI_API_KEY", "test-key");
-    const speech = stubSpeech();
-    const inbox = stubClientInbox({ answer: "busy" });
-    try {
-      await expect(
-        deliver("wrun_8", { clientId: "kitchen", text: "x", dueAt: 0 }),
-      ).rejects.toMatchObject({ name: "ClientUnreachableError", reason: "busy" });
-    } finally {
-      speech.restore();
-      inbox.restore();
-    }
+    installStubSpeech();
+    installStubClientInbox({ answer: "busy" });
+    await expect(
+      deliver("wrun_8", { clientId: "kitchen", text: "x", dueAt: 0 }),
+    ).rejects.toMatchObject({ name: "ClientUnreachableError", reason: "busy" });
   });
 });

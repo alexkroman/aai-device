@@ -32,7 +32,7 @@ DEVICE_STAMP := $(FW)/test/device/.last-pass
 # The local SDK checkout agent/package.json links against. Keep the two in step.
 AAI_SDK   ?= $(HOME)/Code/aai/agent-builtin-api-tools
 
-.PHONY: composio-webhook check require-idf lint lint-format lint-tidy lint-cppcheck lint-python lint-agent lint-caller \
+.PHONY: composio-webhook check require-idf lint lint-format lint-tidy lint-cppcheck lint-python lint-agent lint-caller sdk-dist \
         build-firmware test-host test-fuzz test-coverage check-contract check-size test-agent \
         device-freshness test-device test-e2e format agent caller supabase flash monitor
 
@@ -68,12 +68,18 @@ lint-python:
 	ruff check $(FW)
 	ruff format --check $(FW)
 
-# Biome, then tsc over every .ts in agent/ (its tsconfig has no include: all of it).
-lint-agent:
+# tsc reads the linked SDK's types from its dist/*.d.ts (AAI_DEV_SOURCE reaches Node and
+# Vite, not the compiler), so the typechecks and agent tests build it first. Turbo rebuilds
+# only what changed; a no-op run is well under a second.
+sdk-dist:
+	cd $(AAI_SDK) && pnpm exec turbo run build --filter=@alexkroman1/aai-cli... --output-logs=errors-only
+
+# Biome, then tsc over every .ts in agent/ (the SDK's tsconfig preset includes all of it).
+lint-agent: sdk-dist
 	cd agent && pnpm run lint
 
 # The calling agent's .ts, typechecked the same way (it has no Biome config of its own).
-lint-caller:
+lint-caller: sdk-dist
 	cd caller && pnpm run typecheck
 
 # ---- firmware ---------------------------------------------------------------
@@ -131,7 +137,7 @@ test-coverage:
 	  > $(FW)/build-cov/summary.json
 	python3 $(FW)/tools/check_coverage.py $(FW)/build-cov/summary.json
 
-test-agent:
+test-agent: sdk-dist
 	cd agent && pnpm test
 
 # The hardware suites can't run without the board, so `make check` at least says so loudly
@@ -157,9 +163,8 @@ format:
 	ruff check --fix $(FW) && ruff format $(FW)
 	cd agent && pnpm run lint:fix
 
-# The CLI runs from source, but the SDK packages it and agent.ts import resolve to their
-# dist/ (the @dev/source condition is only on inside the SDK repo), so SDK edits are
-# invisible until built. Turbo rebuilds only what changed; a no-op run is well under a second.
+# AAI_DEV_SOURCE=1: the linked SDK runs from its src/ (the CLI, the runtime it builds and
+# every SDK import Vite bundles into the agent), so an SDK edit shows up with no build.
 #
 # The local Supabase stack (supabase/: household profile, memories, durable workflow runs)
 # comes up first if it isn't already; up.sh prints its URL and keys for agent/.env's
@@ -178,8 +183,8 @@ agent: export SMS_ALLOWED_PHONES := *
 endif
 # run_code's snippets run in `deno run` with no permissions (the SDK's local sandbox).
 agent: export AAI_RUN_CODE := deno
+agent caller: export AAI_DEV_SOURCE := 1
 agent:
-	cd $(AAI_SDK) && pnpm exec turbo run build --filter=@alexkroman1/aai-cli... --output-logs=errors-only
 	env="$$(supabase/up.sh)" && eval "$$env" && AAI_SDK=$(AAI_SDK) agent/run.sh
 
 # The agent that places the household's phone calls (caller/), behind a Cloudflare quick

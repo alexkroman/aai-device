@@ -1,8 +1,7 @@
 import type { WorkflowContext } from "@alexkroman1/aai";
-import { stepNotifyClient, stepSpeak } from "@alexkroman1/aai/step";
+import { DEFAULT_CLIENT_DELIVERY_ATTEMPTS, stepSayOnClient } from "@alexkroman1/aai/step";
 import { stepGenerateJsonOrFail } from "@alexkroman1/aai/step-errors";
 import { z } from "zod";
-import { DELIVER_ATTEMPTS, NOTICE_SAMPLE_RATE } from "./remind.ts";
 
 // One event from a watched app (watches.ts): the webhook verified it and matched it to
 // the speaker's watch. A trigger is coarser than what was asked ("a new email", not "a new
@@ -39,7 +38,7 @@ export async function appEventFlow(input: AppEventInput, ctx: WorkflowContext) {
   if (!verdict.tell || !verdict.say) return { told: false };
   const { runId } = ctx;
   await ctx.step("tell", () => tell(runId, input, verdict.say), {
-    maxAttempts: DELIVER_ATTEMPTS,
+    maxAttempts: DEFAULT_CLIENT_DELIVERY_ATTEMPTS,
   });
   return { told: true, said: verdict.say };
 }
@@ -51,13 +50,7 @@ export async function judge(input: AppEventInput): Promise<z.infer<typeof Verdic
   );
 }
 
-/** Speak and push in ONE step, as reminders do: the run id makes a redelivery a repeat. */
+/** As reminders do: the run id makes a redelivery a repeat the device drops. */
 export async function tell(id: string, input: AppEventInput, said: string): Promise<void> {
-  const spoken = await stepSpeak(said, { sampleRate: NOTICE_SAMPLE_RATE });
-  await stepNotifyClient(input.clientId, {
-    id,
-    event: "app",
-    data: { app: input.app, said },
-    audio: spoken.pcm,
-  });
+  await stepSayOnClient(input.clientId, { id, event: "app", text: said, data: { app: input.app } });
 }

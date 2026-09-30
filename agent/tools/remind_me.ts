@@ -1,4 +1,5 @@
-import { sessionClientId, tool } from "@alexkroman1/aai";
+import { requireSessionClient, tool } from "@alexkroman1/aai";
+import { isToolFailure } from "@alexkroman1/aai/utils";
 import { z } from "zod";
 import { MAX_REMINDER_MS, remind, reminderDueAt, spokenDue } from "../shared.ts";
 
@@ -31,8 +32,8 @@ export default tool({
       .describe("A clock time in 24-hour HH:MM, when they said a time, e.g. '17:00' for five pm"),
   }),
   async execute({ text, in_seconds, at }, ctx) {
-    const clientId = sessionClientId(ctx);
-    if (!clientId) return { error: "This device can't receive reminders." };
+    const clientId = requireSessionClient(ctx, "This device can't receive reminders.");
+    if (isToolFailure(clientId)) return clientId;
     const now = new Date();
     const dueAt = reminderDueAt(now, { inSeconds: in_seconds, at });
     if (dueAt === undefined) return { error: "Say when: a time of day or how long from now." };

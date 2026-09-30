@@ -1,4 +1,5 @@
-import { sessionClientId, sessionClientPhone, tool, toolFailure } from "@alexkroman1/aai";
+import { requireSessionClient, sessionClientPhone, tool } from "@alexkroman1/aai";
+import { isToolFailure } from "@alexkroman1/aai/utils";
 import { z } from "zod";
 import { appJob } from "../shared.ts";
 
@@ -49,8 +50,8 @@ export default tool({
       ),
   }),
   async execute({ task, text = false }, ctx) {
-    const clientId = sessionClientId(ctx);
-    if (!clientId) return toolFailure("Apps work on a speaker or its linked page only.");
+    const clientId = requireSessionClient(ctx, "Apps work on a speaker or its linked page only.");
+    if (isToolFailure(clientId)) return clientId;
     // Keyed by the speaker, so its Running panel can find the run (GET /api/tasks).
     const phone = sessionClientPhone(ctx);
     await ctx.workflows.start(

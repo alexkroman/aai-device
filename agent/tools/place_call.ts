@@ -1,4 +1,5 @@
-import { sessionClientId, tool, toolFailure } from "@alexkroman1/aai";
+import { requireSessionClient, tool, toolFailure } from "@alexkroman1/aai";
+import { isToolFailure } from "@alexkroman1/aai/utils";
 import { z } from "zod";
 import { approveCall } from "../calls.ts";
 import { call } from "../shared.ts";
@@ -14,8 +15,11 @@ export default tool({
     call_id: z.string().max(64).describe("The call_id prepare_call returned"),
   }),
   async execute({ call_id }, ctx) {
-    const clientId = sessionClientId(ctx);
-    if (!clientId) return toolFailure("Calls can only be placed from a speaker or the page.");
+    const clientId = requireSessionClient(
+      ctx,
+      "Calls can only be placed from a speaker or the page.",
+    );
+    if (isToolFailure(clientId)) return clientId;
     const approved = await approveCall(ctx, call_id, { sessionId: ctx.sessionId, clientId });
     if (approved.status === "refused") return toolFailure(approved.why);
     await ctx.workflows.start(

@@ -32,7 +32,8 @@ export default agent({
   // Host-side tools, enabled by name. Setting this REPLACES the default
   // (`["think"]`), so `think` is listed to keep it. `open_meteo`, `calculate`
   // and `visit_webpage` are keyless; the rest read their keys from `.env`.
-  // `text_me` texts the browser's reported phone, else SMS_TO_PHONE, via Textbelt.
+  // `text_me` texts the browser's reported phone, else SMS_TO_PHONE, via Textbelt, with
+  // links taken out (TEXTBELT_LINKS=strip) until the key is verified to send them.
   // "near me" and "the weather" mean the saved home_address (context.ts); the
   // device's `?location=` (CONFIG_AAI_DEVICE_ADDRESS) only when none is saved.
   builtinTools: [
@@ -46,8 +47,7 @@ export default agent({
     // env or subprocesses; 5 s): `make agent` sets AAI_RUN_CODE=deno. Without it the
     // SDK refuses every call rather than run the code in this process.
     "run_code",
-    // Not "text_me": tools/text_me.ts replaces it, with links taken out until the
-    // Textbelt key is verified to send them.
+    "text_me",
   ],
   // Reminders (tools/remind_me.ts): a durable run per reminder that sleeps until it is due
   // and pushes the spoken reminder to the speaker's inbox socket. Under `aai dev` without a
@@ -60,6 +60,9 @@ export default agent({
   // round trips too slow for a turn: appJob does every app task and says the answer,
   // appEvent judges and says an event from a watched app, emailResult sends email_me.
   workflows: { remind, research, memorize, call, appEvent, appJob, emailResult },
+  // What the speaker plays pushed notices at (stepSayOnClient): the board's own rate, so
+  // the firmware needs no resampler.
+  clientInbox: { sampleRate: 16_000 },
   // Every connect of a speaker (its ?client= id) is ONE long conversation: the SDK
   // replays the last few hours verbatim, and this adds everything older, compacted, plus
   // all that mem0 holds about the household (context.ts). Fixed for the session.
@@ -68,14 +71,16 @@ export default agent({
   // The page's sidebar: profile, memories, context, sessions, running tasks, linking
   // (routes.ts), served under /api.
   routes,
-  // Keyed by session AND watermark: a session resumed and hung up again is memorized from
-  // where the last run stopped, and a repeated end is the same run.
+  // Deduped by session AND watermark: a session resumed and hung up again is memorized
+  // from where the last run stopped, and a repeated end of the same stretch starts no
+  // second run (a `key` only labels runs; it is `dedupeKey` that makes a start a no-op).
   onSessionEnd: async ({ sessionId, clientId, workflows, lastEventIndex }) => {
     if (!clientId || lastEventIndex < 0) return;
+    const watermark = `${sessionId}:${lastEventIndex}`;
     await workflows.start(
       memorize,
       { clientId, sessionId, throughEvent: lastEventIndex },
-      { key: `${sessionId}:${lastEventIndex}` },
+      { key: watermark, dedupeKey: watermark },
     );
   },
   // Declared so a deploy refuses to start without them rather than the tools
@@ -89,7 +94,7 @@ export default agent({
     "TEXTBELT_KEY",
     "SMS_TO_PHONE",
     "MEM0_API_KEY",
-    // The household's apps (apps.ts): find_app_action, run_app_action and the page's Apps.
+    // The household's apps (apps.ts): app_task's runs (Composio over MCP) and the page's Apps.
     "COMPOSIO_API_KEY",
   ],
 });

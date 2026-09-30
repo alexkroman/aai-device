@@ -1,3 +1,4 @@
+import type { EnvContext } from "@alexkroman1/aai/step";
 import { VERBATIM_WINDOW_MS } from "./history-window.ts";
 import { allMemories, type Memory } from "./memory.ts";
 import { describeProfile, type Profile, readProfile } from "./profile.ts";
@@ -20,12 +21,10 @@ import { MAX_DIGESTS } from "./workflows/memorize.ts";
 // act on, and until this was here the model could not see them, so it answered "what's my
 // address" with "I don't have it saved" while the pollen tool read it fine.
 
-type Ctx = { env: Readonly<Partial<Record<string, string>>>; signal?: AbortSignal };
-
 type Digest = { started_at: string; digest: string };
 
 export async function sessionContext(
-  ctx: Ctx & { clientId?: string | undefined; sessionId?: string | undefined },
+  ctx: EnvContext & { clientId?: string | undefined; sessionId?: string | undefined },
   now = new Date(),
 ): Promise<{ instructions?: string; historySince?: number; location?: string }> {
   const since = now.getTime() - VERBATIM_WINDOW_MS;
@@ -58,7 +57,7 @@ export async function sessionContext(
  * awaited: the connect must not wait on a write, and a lost row costs only the view.
  */
 function saveContext(
-  ctx: Ctx & { clientId?: string | undefined },
+  ctx: EnvContext & { clientId?: string | undefined },
   sessionId: string,
   text: string,
 ) {
@@ -69,7 +68,7 @@ function saveContext(
   }).catch((err: unknown) => console.warn(`session context not saved: ${String(err)}`));
 }
 
-async function recentDigests(ctx: Ctx, clientId: string, before: number): Promise<Digest[]> {
+async function recentDigests(ctx: EnvContext, clientId: string, before: number): Promise<Digest[]> {
   const rows = await rest<Digest[]>(
     ctx,
     `/conversation_digests?client_id=eq.${encodeURIComponent(clientId)}&digest=neq.` +
@@ -79,7 +78,7 @@ async function recentDigests(ctx: Ctx, clientId: string, before: number): Promis
   return rows.reverse();
 }
 
-async function olderHistory(ctx: Ctx, clientId: string): Promise<string | undefined> {
+async function olderHistory(ctx: EnvContext, clientId: string): Promise<string | undefined> {
   const rows = await rest<{ summary: string }[]>(
     ctx,
     `/older_history?client_id=eq.${encodeURIComponent(clientId)}&select=summary`,
