@@ -82,9 +82,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      # Pinned: `latest` asks GitHub's API for the newest release without a token, and that
+      # is rate limited per runner IP (it failed a run). Bump it on purpose.
       - uses: supabase/setup-cli@v1
         with:
-          version: latest
+          version: 2.118.0
       - run: make test-supabase SUPABASE_UP='supabase db start'
 
   lint:
