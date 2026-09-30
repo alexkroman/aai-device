@@ -3,6 +3,7 @@ import { MIN_APP_SEARCH } from "../app-search.ts";
 import { VERBATIM_WINDOW_MS } from "../history-window.ts";
 import { api } from "./api.ts";
 import { browserId, linkedSpeaker, setLinkedSpeaker } from "./client-id.ts";
+import { phoneE164, readSetting, writeSetting } from "./settings.ts";
 
 // Everything about the speaker that isn't the conversation: the household profile, the
 // runs going on for it, what it remembers, and the context each session started with,
@@ -23,6 +24,8 @@ export function Sidebar(props: {
     <div className="w-full flex flex-col gap-3">
       <Panel title="Household" open>
         <Profile />
+        {/* Outside Profile: it is this browser's, so it shows even when /profile can't load. */}
+        <TextMeAt />
       </Panel>
       <Panel title="Link to a speaker">
         <Link endSession={props.endSession} />
@@ -123,13 +126,38 @@ function Profile() {
         busy={saving === "email"}
         onSave={(v) => save("email", v)}
       />
-      <p className="text-xs opacity-60">
-        {data.phone_last4
-          ? `Texts go to the number ending in ${data.phone_last4}. Say a new one to change it.`
-          : "No phone saved: tell the speaker your number and read back the code it texts."}
-      </p>
       <Failure error={failed} />
     </>
+  );
+}
+
+/**
+ * Where this browser's texts go (text_me, research, app jobs): kept in this browser and
+ * reported on every connect (settings.ts, client.tsx), not in the household profile.
+ */
+function TextMeAt() {
+  const [value, setValue] = useState(() => readSetting("phone"));
+  const invalid = value.trim() !== "" && phoneE164(value) === undefined;
+  return (
+    <label className="flex flex-col gap-1 text-xs opacity-80">
+      Text me at (with the country code, e.g. +1)
+      <input
+        className={input}
+        type="tel"
+        value={value}
+        placeholder="e.g. +1 555 555 0123"
+        aria-invalid={invalid}
+        onChange={(e) => {
+          setValue(e.target.value);
+          writeSetting("phone", e.target.value);
+        }}
+      />
+      {invalid && (
+        <span className="text-red-400">
+          Not a number texts can go to: add the country code, e.g. +1
+        </span>
+      )}
+    </label>
   );
 }
 

@@ -2,7 +2,6 @@ import { type FormEvent, type ReactNode, useEffect, useRef, useState } from "rea
 import { browserId, clientId } from "./client-id.ts";
 import type { Entry, Item } from "./history.ts";
 import { Ring } from "./ring.tsx";
-import { phoneE164, readSetting, type Setting, writeSetting } from "./settings.ts";
 import { Sidebar } from "./sidebar.tsx";
 import { type Led, useDevice } from "./use-device.ts";
 
@@ -28,12 +27,6 @@ export function App() {
         <p className="text-sm text-center text-balance min-h-10 leading-relaxed" aria-live="polite">
           {STATUS[device.led]}
         </p>
-        <SettingField
-          setting="phone"
-          label="Text me at (with the country code, e.g. +1)"
-          placeholder="e.g. +1 555 555 0123"
-          type="tel"
-        />
         <p className="text-xs opacity-60" title="Reminders and research summaries come here">
           Speaker {device.clientId}: inbox {device.inboxUp ? "connected" : "offline"}
         </p>
@@ -240,43 +233,6 @@ function Composer({ onSend }: { onSend: (text: string) => void }) {
         Send
       </button>
     </form>
-  );
-}
-
-/** One of the values this browser reports on connect (settings.ts); saved as typed. */
-function SettingField({
-  setting,
-  label,
-  placeholder,
-  type = "text",
-}: {
-  setting: Setting;
-  label: string;
-  placeholder: string;
-  type?: "text" | "tel";
-}) {
-  const [value, setValue] = useState(() => readSetting(setting));
-  const invalid = value.trim() !== "" && phoneE164(value) === undefined;
-  return (
-    <label className="w-full flex flex-col gap-1 text-xs opacity-70">
-      {label}
-      <input
-        type={type}
-        value={value}
-        onChange={(e) => {
-          setValue(e.target.value);
-          writeSetting(setting, e.target.value);
-        }}
-        placeholder={placeholder}
-        aria-invalid={invalid}
-        className="px-3 py-2 rounded-lg bg-aai-surface border border-aai-border text-sm outline-none focus:border-aai-primary"
-      />
-      {invalid && (
-        <span className="text-red-400">
-          Not a number texts can go to: add the country code, e.g. +1
-        </span>
-      )}
-    </label>
   );
 }
 
