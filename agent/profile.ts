@@ -1,4 +1,4 @@
-import { spokenDigits } from "@alexkroman1/aai";
+import { codeMatches, hashCode, mintDigitCode } from "@alexkroman1/aai";
 import { sendToChannel, textbeltChannel } from "@alexkroman1/aai/channels";
 import type { EnvContext } from "@alexkroman1/aai/step";
 import { normalizePhone as toE164 } from "@alexkroman1/aai/utils";
@@ -108,11 +108,6 @@ export const MAX_CODES_PER_DAY = 5;
 export const CODE_TTL_MS = 10 * 60 * 1000;
 const MAX_ATTEMPTS = 5;
 
-export async function sha256(text: string): Promise<string> {
-  const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
-  return Array.from(new Uint8Array(bytes), (b) => b.toString(16).padStart(2, "0")).join("");
-}
-
 /** Text via Textbelt; throws with Textbelt's own reason, which the model can say. */
 export async function sendText(ctx: EnvContext, phone: string, message: string): Promise<void> {
   const key = ctx.env.TEXTBELT_KEY;
@@ -139,13 +134,12 @@ export async function startPhoneVerification(ctx: EnvContext, said: string): Pro
   );
   if (recent.length >= MAX_CODES_PER_DAY) return { status: "rate_limited" };
 
-  const [random = 0] = crypto.getRandomValues(new Uint32Array(1));
-  const code = String(random % 1_000_000).padStart(6, "0");
+  const code = mintDigitCode(6);
   const [row] = await rest<{ id: number }[]>(ctx, "/phone_verification", {
     method: "POST",
     body: {
       phone,
-      code_sha256: await sha256(code),
+      code_sha256: await hashCode(code),
       expires_at: new Date(Date.now() + CODE_TTL_MS).toISOString(),
     },
     prefer: "return=representation",
@@ -182,7 +176,7 @@ export async function confirmPhone(ctx: EnvContext, code: string): Promise<Confi
   );
   if (!pending) return { status: "none_pending" };
 
-  if ((await sha256(spokenDigits(code))) !== pending.code_sha256) {
+  if (!(await codeMatches(code, pending.code_sha256))) {
     const attempts = pending.attempts + 1;
     await rest(ctx, `/phone_verification?id=eq.${pending.id}`, {
       method: "PATCH",
