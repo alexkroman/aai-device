@@ -161,6 +161,8 @@ static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data)
     case AAI_EVENT_TICK:
     case AAI_EVENT_NOTICE:  // the inbox is not started by the test app
     case AAI_EVENT_NOTICE_QUEUED:
+    case AAI_EVENT_AGENT_FOUND:  // nor discovery (the configured URL is used) or OTA
+    case AAI_EVENT_UPDATE_READY:
         break;
     }
 }

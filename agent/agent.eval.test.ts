@@ -332,14 +332,15 @@ type SpeakerContext = EvalTestContext & {
 
 /**
  * A case as the kitchen SPEAKER (the suite's `clientId`), with the safety net every
- * case gets: no request may have even tried Twilio or Composio, and no tool may have
- * errored.
+ * case gets: no request may have even tried Twilio or Composio, none may have reached
+ * a host the fake network has no route for, and no tool may have errored.
  */
 function onSpeaker(body: (ctx: SpeakerContext) => Promise<void>) {
   return async (ctx: SpeakerContext) => {
     try {
       await body(ctx);
       ctx.network.expectNoOutbound(/twilio|composio/);
+      ctx.network.expectNothingRefused();
       expect(errorsIn(ctx.session.events())).toEqual([]);
     } catch (err) {
       // A live failure is only readable with the whole exchange beside it.

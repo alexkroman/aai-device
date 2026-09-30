@@ -115,8 +115,9 @@ describe("the speaker agent", () => {
     const named = new Set(prompt.match(/\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/g) ?? []);
     // Words the prompt quotes from tool inputs and results, not tool names.
     for (const word of ["in_seconds", "read_back", "say_if_not_said"]) named.delete(word);
-    // The scan above only sees snake_case; these are named by a single word.
-    for (const word of ["calculate", "pollen", "stop", "remember", "recall", "forget"]) {
+    // The scan above only sees snake_case; these are named by a single word. The SDK
+    // finds calculate and remember itself, but not "recall only when" in plain prose.
+    for (const word of ["pollen", "stop", "recall", "forget"]) {
       expect(prompt).toMatch(new RegExp(`\\b${word}\\b`));
       named.add(word);
     }

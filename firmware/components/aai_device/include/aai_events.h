@@ -16,6 +16,8 @@ typedef enum {
     AAI_EVENT_TICK,            // periodic, for timeouts (see aai_events_start_tick)
     AAI_EVENT_NOTICE,          // a notice from the inbox started playing (inbox.h)
     AAI_EVENT_NOTICE_QUEUED,   // ... and all of its audio is in the speaker buffer
+    AAI_EVENT_AGENT_FOUND,     // the agent's URL is known or changed (discovery.h)
+    AAI_EVENT_UPDATE_READY,    // new firmware is installed; reboot into it when idle (ota.h)
 } aai_event_id_t;
 
 void aai_events_post(aai_event_id_t id, const void *data, size_t size);

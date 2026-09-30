@@ -11,8 +11,10 @@
 
 #include <stdbool.h>
 
-// Connect, and keep reconnecting for the device's lifetime. After Wi-Fi is up.
-void inbox_init(void);
+// Connect to the inbox of the agent at `agent_url` (its /websocket URL), and keep
+// reconnecting for the device's lifetime. After Wi-Fi is up. Called again with a new URL
+// (the agent was found somewhere else), it moves there. Not from the inbox's own task.
+void inbox_start(const char *agent_url);
 
 // This device's client id: CONFIG_AAI_CLIENT_ID, or "speaker-" and the last three bytes of
 // the MAC. Sent as ?client= on voice sessions too, which is how a tool finds this device.

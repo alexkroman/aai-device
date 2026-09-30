@@ -43,3 +43,17 @@ CONFIG_ESP_WS_CLIENT_SEPARATE_TX_LOCK=y
 # mailbox holds a window's worth of segments. Buffers go to PSRAM (SPIRAM_TRY_ALLOCATE_WIFI_LWIP).
 CONFIG_LWIP_TCP_WND_DEFAULT=32768
 CONFIG_LWIP_TCP_RECVMBOX_SIZE=32
+
+# Over-the-air updates (ota.c): an image that resets before ota_mark_healthy() is rolled
+# back. Plain http:// is allowed so `make ota-serve` works on the LAN without certificates.
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+CONFIG_ESP_HTTPS_OTA_ALLOW_HTTP=y
+
+# A crash saves a core dump to the `coredump` partition (crash.c logs it at the next boot).
+CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
+CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF=y
+
+# mDNS (discovery.c): its task and allocations in PSRAM, like the rest of the network-only
+# work, so it costs none of the internal RAM the websocket clients need.
+CONFIG_MDNS_TASK_CREATE_FROM_SPIRAM=y
+CONFIG_MDNS_MEMORY_ALLOC_SPIRAM=y
