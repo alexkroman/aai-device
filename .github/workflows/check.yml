@@ -20,7 +20,7 @@ concurrency:
 
 env:
   # agent/ and caller/ link the SDK from a checkout beside this repo
-  # (../../aai/agent-builtin-api-tools from each), as on a laptop. CI uses the SDK's main.
+  # (../../aai/agent from each), as on a laptop. CI uses the SDK's main.
   AAI_SDK_REPO: https://github.com/alexkroman/agent
   AAI_SDK_REF: main
 
@@ -29,7 +29,7 @@ jobs:
     name: Agents (Biome, tsc, tests, scripted evals, SDK contract; root JSON)
     runs-on: ubuntu-latest
     env:
-      AAI_SDK: ${{ github.workspace }}/../aai/agent-builtin-api-tools
+      AAI_SDK: ${{ github.workspace }}/../aai/agent
     steps:
       - uses: actions/checkout@v5
       - uses: pnpm/action-setup@v4

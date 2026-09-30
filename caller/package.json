@@ -16,9 +16,9 @@
     "lint:fix": "biome check --write ."
   },
   "dependencies": {
-    "@alexkroman1/aai": "link:../../aai/agent-builtin-api-tools/packages/aai",
-    "@alexkroman1/aai-cli": "link:../../aai/agent-builtin-api-tools/packages/aai-cli",
-    "@alexkroman1/aai-runtime": "link:../../aai/agent-builtin-api-tools/packages/aai-runtime",
+    "@alexkroman1/aai": "link:../../aai/agent/packages/aai",
+    "@alexkroman1/aai-cli": "link:../../aai/agent/packages/aai-cli",
+    "@alexkroman1/aai-runtime": "link:../../aai/agent/packages/aai-runtime",
     "xstate": "^5.32.6",
     "zod": "^4.5.4"
   },

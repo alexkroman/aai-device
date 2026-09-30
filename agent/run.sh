@@ -17,7 +17,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 PORT="${PORT:-3000}"
-SDK="${AAI_SDK:-$HOME/Code/aai/agent-builtin-api-tools}"
+SDK="${AAI_SDK:-$HOME/Code/aai/agent}"
 # The linked SDK's CLI (the global `aai` is an older release); `make agent` sets
 # AAI_DEV_SOURCE=1 so it runs, and builds the agent against, the SDK's src/.
 aai() { node "$SDK/packages/aai-cli/bin.mjs" "$@"; }

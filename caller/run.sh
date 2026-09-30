@@ -11,7 +11,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 PORT="${PORT:-3100}"
-SDK="${AAI_SDK:-$HOME/Code/aai/agent-builtin-api-tools}"
+SDK="${AAI_SDK:-$HOME/Code/aai/agent}"
 : "${SUPABASE_URL:?run through make caller}" "${SUPABASE_SECRET_KEY:?run through make caller}"
 
 exec node "$SDK/packages/aai-cli/bin.mjs" dev -p "$PORT" --tunnel --on-public-url ./publish-url.sh
