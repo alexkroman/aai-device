@@ -3,7 +3,8 @@
 #
 #   make check        EVERYTHING that doesn't need the board: lint and format checks for every
 #                     language here, firmware builds, host tests, fuzzing, coverage floor, SDK
-#                     contract, memory budget, both agents' tests, the database's tests.
+#                     contract, memory budget, both agents' tests and scripted evals, the
+#                     database's tests.
 #                     Also warns when firmware changed since the on-device tests last passed.
 #   make test-device  on-device Unity tests (board plugged in, `make agent` running)
 #   make test-e2e     acoustic end-to-end (production firmware, speakers on, agent running)
@@ -55,11 +56,11 @@ AAI_SDK   ?= $(HOME)/Code/aai/agent-builtin-api-tools
 
 .PHONY: composio-webhook check require-idf lint lint-format lint-tidy lint-cppcheck lint-python lint-agent lint-caller \
         lint-shell lint-sql lint-cmake sdk-dist build-firmware test-host test-fuzz test-coverage check-contract \
-        check-size test-agent test-caller test-supabase device-freshness test-device test-e2e format format-files \
+        check-size test-agent test-caller eval-agent eval-caller test-supabase device-freshness test-device test-e2e format format-files \
         hooks agent caller supabase flash monitor ota-serve coredump
 
 check: hooks require-idf lint build-firmware test-host test-fuzz test-coverage check-contract check-size \
-       test-agent test-caller test-supabase device-freshness
+       test-agent test-caller eval-agent eval-caller test-supabase device-freshness
 	@printf '\n✅ make check passed\n'
 
 # Idempotent, and local to this clone: git runs .githooks/pre-commit from now on.
@@ -187,6 +188,15 @@ test-agent: sdk-dist
 
 test-caller: sdk-dist
 	cd caller && pnpm test
+
+# Both agents' evals, SCRIPTED: each case's stubReply plays the model, so the real session,
+# tools and fakes run and nothing is spent. AAI_EVAL_STUB=1 holds even with a provider key in
+# .env; `cd agent && pnpm eval` without it is the live run, a judgment call, not a gate.
+eval-agent: sdk-dist
+	cd agent && AAI_EVAL_STUB=1 pnpm eval
+
+eval-caller: sdk-dist
+	cd caller && AAI_EVAL_STUB=1 pnpm eval
 
 # The migrations, applied from zero, then supabase/tests (pgTAP) and the schema linter. Locally
 # that's the stack `make agent` uses (the tests roll back, so its data is untouched); CI runs

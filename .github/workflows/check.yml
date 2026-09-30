@@ -2,7 +2,8 @@ name: Check
 
 # `make check`, split into jobs that run side by side. Every step is a Makefile target, so a
 # red job reproduces locally with the same command. What CI can't run: the on-device and
-# acoustic suites (make test-device / test-e2e need the board) and the agents' evals.
+# acoustic suites (make test-device / test-e2e need the board) and the LIVE evals (a model
+# and a key; the scripted ones run here).
 
 on:
   pull_request:
@@ -25,7 +26,7 @@ env:
 
 jobs:
   agents:
-    name: Agents (Biome, tsc, tests, SDK contract)
+    name: Agents (Biome, tsc, tests, scripted evals, SDK contract)
     runs-on: ubuntu-latest
     env:
       AAI_SDK: ${{ github.workspace }}/../aai/agent-builtin-api-tools
@@ -47,6 +48,7 @@ jobs:
           (cd caller && pnpm install --frozen-lockfile)
       - run: make lint-agent lint-caller
       - run: make test-agent test-caller
+      - run: make eval-agent eval-caller
       - run: make check-contract
 
   firmware:

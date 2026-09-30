@@ -427,6 +427,12 @@ describeEval(
 
         expect(names(turn)).toEqual(["air_quality"]);
         expect(String(toolArgsIn(turn.toolCalls, "air_quality")[0]?.location)).toMatch(/seattle/i);
+        // The fixture's own numbers: a lookup that missed the fake network can't produce them.
+        expect(toolResultIn(turn.toolCalls, "air_quality")).toMatchObject({
+          aqi: 42,
+          scale: "US AQI",
+          mainPollutant: "fine particles",
+        });
         expect(turn.text).toMatch(/42|forty[- ]two/i);
         // LIVE ONLY: the prompt asks for the category and the main pollutant too.
         if (mode === "live") {
