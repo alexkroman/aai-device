@@ -50,10 +50,13 @@ export async function callFlow(input: CallInput, ctx: WorkflowContext) {
   return { said, twilio: last.twilio ?? null };
 }
 
-/** The number to call from, or undefined when agent/.env lacks any Twilio setting. */
+/**
+ * The number to call from, or undefined when agent/.env has none. Only the number: a
+ * missing TWILIO_ACCOUNT_SID or TWILIO_AUTH_TOKEN is stepPlaceCall's to catch, and it
+ * throws a non-retryable PlaceCallError for it, which placeCall's catch already announces.
+ */
 function twilioFrom(): string | undefined {
-  const ok = ["TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN"].every((k) => stepEnv(k)?.trim());
-  return ok ? stepEnv("TWILIO_FROM_NUMBER")?.trim() || undefined : undefined;
+  return stepEnv("TWILIO_FROM_NUMBER")?.trim() || undefined;
 }
 
 /** Dial. A refusal that will refuse again is an answer (announced); a blip is retried. */
@@ -64,8 +67,8 @@ async function placeCall(callId: string): Promise<Dialled> {
   // Missing setup is an answer to say, not a failure to retry three times in silence.
   const from = twilioFrom();
   if (!from) {
-    await updateCall(db, callId, { status: "failed", error: "Twilio is not set up" });
-    return { failed: "calling isn't set up yet (TWILIO_ settings in agent/.env)" };
+    await updateCall(db, callId, { status: "failed", error: "TWILIO_FROM_NUMBER is not set" });
+    return { failed: "calling isn't set up yet (TWILIO_FROM_NUMBER in agent/.env)" };
   }
   const base = await callerUrl(db);
   if (!base) {
