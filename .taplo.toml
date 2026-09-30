@@ -1,5 +1,6 @@
-# TOML formatting and linting (make lint-toml / make format).
-include = ["pyproject.toml", "supabase/config.toml"]
+# TOML formatting and linting (make lint-toml / make format), over the files the Makefile
+# passes. No `include` here: it would exclude any file it doesn't list, even one named on
+# the command line, which is how the pre-commit hook passes them.
 
 [formatting]
 align_comments = false

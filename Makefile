@@ -51,6 +51,7 @@ MARKDOWNLINT := $(NPX) markdownlint-cli2@0.18.1
 PRETTIER     := $(NPX) prettier@3.6.2
 BIOME        := agent/node_modules/.bin/biome
 YAML_SOURCES  = $(shell git ls-files '*.yml' '*.yaml')
+TOML_SOURCES  = $(shell git ls-files '*.toml')
 # JSON Biome can't reach from inside agent/ or caller/, where lint-agent/lint-caller run it.
 ROOT_JSON     = $(shell git ls-files '*.json' ':!agent' ':!caller' ':!firmware')
 SH_SOURCES    = $(shell git ls-files '*.sh' .githooks)
@@ -136,8 +137,8 @@ lint-json:
 	$(BIOME) check $(ROOT_JSON)
 
 lint-toml:
-	$(TAPLO) fmt --check
-	$(TAPLO) lint
+	$(TAPLO) fmt --check $(TOML_SOURCES)
+	$(TAPLO) lint $(TOML_SOURCES)
 
 # ESP-IDF's Kconfig style and syntax checker. It has no fix mode: a failure leaves its
 # suggestion beside the file as Kconfig.new.
@@ -273,9 +274,9 @@ format:
 	$(SQLFLUFF) format supabase
 	$(SHFMT) --write $(SH_SOURCES)
 	$(GERSEMI) --in-place $(CMAKE_SOURCES)
-	$(MARKDOWNLINT) --fix '**/*.md' || true
+	$(MARKDOWNLINT) --fix '**/*.md' >/dev/null 2>&1 || $(MARKDOWNLINT) --fix '**/*.md' || true
 	$(BIOME) check --write $(ROOT_JSON)
-	$(TAPLO) fmt
+	$(TAPLO) fmt $(TOML_SOURCES)
 	$(PRETTIER) --write --log-level=warn $(YAML_SOURCES)
 
 # Formats just FILES (the pre-commit hook's staged files), each with its language's formatter.
@@ -291,7 +292,8 @@ format-files:
 	$(if $(call only,%.sql),$(SQLFLUFF) format $(call only,%.sql) >/dev/null)
 	$(if $(call only,%.sh .githooks/%),$(SHFMT) --write $(call only,%.sh .githooks/%))
 	$(if $(call only,%CMakeLists.txt),$(GERSEMI) --in-place $(call only,%CMakeLists.txt))
-	$(if $(call only,%.md),$(MARKDOWNLINT) --fix $(call only,%.md) >/dev/null || true)
+	$(if $(call only,%.md),{ $(MARKDOWNLINT) --fix $(call only,%.md) || \
+	  $(MARKDOWNLINT) --fix $(call only,%.md) || true; } >/dev/null 2>&1)
 	$(if $(call only,%.toml),$(TAPLO) fmt $(call only,%.toml) 2>/dev/null)
 	$(if $(call only,%.yml %.yaml),$(PRETTIER) --write --log-level=warn $(call only,%.yml %.yaml))
 
