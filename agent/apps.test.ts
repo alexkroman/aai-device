@@ -6,6 +6,7 @@ import {
   disconnectApp,
   findActions,
   fit,
+  listApps,
   MAX_ACTION_RESULT_CHARS,
   MAX_FOUND_ACTIONS,
   MAX_RESULT_STRING,
@@ -15,8 +16,8 @@ import {
 
 // Composio behind a fake fetch, with the composio_sessions table beside it: what these
 // pin is that each speaker is its own Composio user, its session is made once and reused,
-// a session Composio lost is made again, and a disconnect can only reach the speaker's
-// own account.
+// a session Composio lost is made again, the page's apps come from the catalog and the
+// speaker's own accounts, and a disconnect can only reach the speaker's own account.
 
 const ctx = {
   env: {
@@ -225,30 +226,88 @@ test("search returns a few actions with their inputs and whether the app is conn
   });
 });
 
-test("disconnect deletes only the account on this speaker's own session", async () => {
-  const user = speaker();
-  const { calls } = fakeBackends((c) => {
+/** Composio's catalog and connected accounts, with `user` holding one Gmail account. */
+function catalog(user: string) {
+  const toolkit = (slug: string, name: string, no_auth = false) => ({
+    slug,
+    name,
+    no_auth,
+    meta: { logo: `https://logos.test/${slug}`, description: `${name} app` },
+  });
+  const apps = [
+    toolkit("gmail", "Gmail"),
+    toolkit("hugging_face", "Hugging Face"),
+    toolkit("hackernews", "Hacker News", true),
+  ];
+  return fakeBackends((c) => {
     const path = composioPath(c);
-    if (path === "/tool_router/session") return { body: { session_id: "trs_d" } };
-    if (path === "/tool_router/session/trs_d/toolkits")
+    if (c.method === "DELETE") return { body: {} };
+    if (path === "/connected_accounts")
       return {
         body: {
           items: [
+            { id: "ca_mine", user_id: user, status: "ACTIVE", toolkit: { slug: "gmail" } },
+            // Filters Composio might not apply: another user's, and a link never finished.
             {
-              slug: "gmail",
-              name: "Gmail",
-              is_no_auth: false,
-              meta: { logo: "", description: "" },
-              connected_account: { id: "ca_mine" },
+              id: "ca_theirs",
+              user_id: "someone-else",
+              status: "ACTIVE",
+              toolkit: { slug: "hugging_face" },
+            },
+            {
+              id: "ca_pending",
+              user_id: user,
+              status: "INITIATED",
+              toolkit: { slug: "hugging_face" },
             },
           ],
         },
       };
-    return { body: {} };
+    if (path === "/toolkits") return { body: { items: apps } };
+    const one = apps.find((a) => path === `/toolkits/${a.slug}`);
+    return one ? { body: one } : { status: 404, body: { error: { message: "not found" } } };
   });
+}
+
+test("search lists the catalog, not the session's toolkits, which leave some apps out", async () => {
+  const user = speaker();
+  const { calls } = catalog(user);
+  const apps = await listApps(ctx, user, { search: "hug" });
+  expect(apps.map((a) => [a.slug, a.connected])).toEqual([
+    ["gmail", true],
+    ["hugging_face", false],
+  ]);
+  expect(apps[1]).toMatchObject({ name: "Hugging Face", logo: "https://logos.test/hugging_face" });
+  const q = calls.find((c) => composioPath(c) === "/toolkits")?.url.searchParams;
+  expect(q?.get("search")).toBe("hug");
+  expect(
+    calls.find((c) => composioPath(c) === "/connected_accounts")?.url.searchParams.get("user_ids"),
+  ).toBe(user);
+  expect(calls.some((c) => composioPath(c).startsWith("/tool_router"))).toBe(false);
+});
+
+test("the connected list is this speaker's working accounts, each named from the catalog", async () => {
+  const user = speaker();
+  catalog(user);
+  expect(await listApps(ctx, user, { connectedOnly: true })).toEqual([
+    {
+      slug: "gmail",
+      name: "Gmail",
+      logo: "https://logos.test/gmail",
+      description: "Gmail app",
+      connected: true,
+    },
+  ]);
+});
+
+test("disconnect deletes only this speaker's own working account", async () => {
+  const user = speaker();
+  const { calls } = catalog(user);
   expect(await disconnectApp(ctx, user, "gmail")).toBe(true);
   const deleted = calls.filter((c) => c.method === "DELETE" && c.url.host !== "supabase.test");
   expect(deleted.map(composioPath)).toEqual(["/connected_accounts/ca_mine"]);
+  // Someone else's, and one never finished: neither is this speaker's to remove.
+  expect(await disconnectApp(ctx, user, "hugging_face")).toBe(false);
   expect(await disconnectApp(ctx, user, "slack")).toBe(false);
 });
 

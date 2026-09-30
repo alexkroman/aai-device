@@ -466,15 +466,18 @@ export async function runWorkbench(
 
 // --- What the page calls: list, connect, disconnect -------------------------------------
 
-type ToolkitsResponse = {
-  items: {
-    name: string;
-    slug: string;
-    is_no_auth: boolean;
-    meta: { logo: string; description: string };
-    connected_account: { id: string; status?: string } | null;
-  }[];
+// Listed from Composio's catalog and connected accounts, not the session's own /toolkits:
+// that one leaves out some apps a session can still connect and use (Hugging Face, even
+// in a session made with only it enabled), so they could never be found on the page.
+
+type Toolkit = {
+  name: string;
+  slug: string;
+  no_auth: boolean | null;
+  meta: { logo: string; description: string };
 };
+
+type Account = { id: string; user_id: string; status: string; toolkit: { slug: string } };
 
 export type App = {
   slug: string;
@@ -484,24 +487,40 @@ export type App = {
   connected: boolean;
 };
 
+/** The speaker's working connections, by app slug. */
+async function accounts(ctx: Ctx, user: string): Promise<Map<string, string>> {
+  const q = new URLSearchParams({ user_ids: user, statuses: "ACTIVE", limit: "100" });
+  const { items } = await call<{ items: Account[] }>(ctx, "GET", `/connected_accounts?${q}`);
+  // Checked again here: a filter Composio ignored must not show another user's account.
+  const mine = items.filter((a) => a.user_id === user && a.status === "ACTIVE");
+  return new Map(mine.map((a) => [a.toolkit.slug, a.id]));
+}
+
 /** Apps to show on the page: the connected ones, or the catalog matching `search`. */
 export async function listApps(
   ctx: Ctx,
   user: string,
   opts: { search?: string; connectedOnly?: boolean } = {},
 ): Promise<App[]> {
-  const q = new URLSearchParams({ limit: "20" });
-  if (opts.search) q.set("search", opts.search);
-  if (opts.connectedOnly) q.set("is_connected", "true");
-  const { items } = await inSession<ToolkitsResponse>(ctx, user, "GET", `/toolkits?${q}`);
-  return items
-    .filter((t) => !t.is_no_auth)
+  const connected = await accounts(ctx, user);
+  let toolkits: Toolkit[];
+  if (opts.connectedOnly) {
+    toolkits = await Promise.all(
+      [...connected.keys()].map((slug) => call<Toolkit>(ctx, "GET", `/toolkits/${enc(slug)}`)),
+    );
+  } else {
+    const q = new URLSearchParams({ limit: "20" });
+    if (opts.search) q.set("search", opts.search);
+    toolkits = (await call<{ items: Toolkit[] }>(ctx, "GET", `/toolkits?${q}`)).items;
+  }
+  return toolkits
+    .filter((t) => !t.no_auth)
     .map((t) => ({
       slug: t.slug,
       name: t.name,
       logo: t.meta.logo,
       description: clip(t.meta.description, MAX_DESCRIPTION),
-      connected: t.connected_account !== null,
+      connected: connected.has(t.slug),
     }));
 }
 
@@ -520,15 +539,13 @@ export async function connectLink(
 }
 
 /**
- * Remove the speaker's connection to one app. The account is looked up on THIS speaker's
- * session, never taken from the page, so one speaker's page can't remove another's.
+ * Remove the speaker's connection to one app. The account is looked up among THIS
+ * speaker's own, never taken from the page, so one speaker's page can't remove another's.
  */
 export async function disconnectApp(ctx: Ctx, user: string, app: string): Promise<boolean> {
-  const q = new URLSearchParams({ toolkits: app, is_connected: "true" });
-  const { items } = await inSession<ToolkitsResponse>(ctx, user, "GET", `/toolkits?${q}`);
-  const account = items.find((t) => t.slug === app)?.connected_account;
+  const account = (await accounts(ctx, user)).get(app);
   if (!account) return false;
-  await call(ctx, "DELETE", `/connected_accounts/${enc(account.id)}`);
+  await call(ctx, "DELETE", `/connected_accounts/${enc(account)}`);
   return true;
 }
 
