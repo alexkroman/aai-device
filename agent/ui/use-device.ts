@@ -22,12 +22,14 @@ import {
 
 // firmware main.c, on top of the SDK's browser session:
 //
-//   IDLE --talk/type--> CONNECTING --connected--> ACTIVE --quiet for FOLLOWUP_MS--> IDLE
+//   IDLE --press/type--> CONNECTING --connected--> ACTIVE --press, or quiet for FOLLOWUP_MS if not live--> IDLE
 //
-// No wake word: the mic is held open by a button (or the space bar) and muted otherwise.
-// Muted still streams silence, so the agent's own endpointing ends the turn on release;
-// the agent keeps automatic turn detection because the device, with no button, needs it.
-// Typing is a turn too, and opens the session first if it is idle. Hanging up is
+// No wake word: one press (the ring or the space bar) goes LIVE, a realtime conversation
+// with the mic open, and the next press hangs up. Live, the agent's automatic turn
+// detection ends each turn, as it does for the device, and the follow-up window never
+// closes the session; only a press, the stop tool or a dropped connection does. Not live,
+// the mic is muted (it still streams silence). Typing is a turn too, and opens the
+// session first if it is idle, which then closes after FOLLOWUP_MS as usual. Hanging up is
 // disconnect(), not end(), so the next turn RESUMES the session the way the device's
 // ?sessionId= does and the agent still knows what was said a minute ago.
 
@@ -54,7 +56,7 @@ export function useDevice() {
 
   const [history, setHistory] = useState<Entry[]>(loadHistory);
   const [failed, setFailed] = useState(false);
-  const [talking, setTalking] = useState(false);
+  const [live, setLive] = useState(false);
   const pendingText = useRef<string | null>(null);
   const phaseSince = useRef(Date.now());
   const lastActivity = useRef(Date.now());
@@ -125,8 +127,19 @@ export function useDevice() {
 
   const hangUp = useCallback(() => {
     pendingText.current = null;
+    setLive(false);
     session.disconnect();
   }, [session]);
+
+  // However the session went down (an error, the server closing it), it is no longer live.
+  const wasUp = useRef(false);
+  useEffect(() => {
+    if (phase !== "idle") wasUp.current = true;
+    else if (wasUp.current) {
+      wasUp.current = false;
+      setLive(false);
+    }
+  }, [phase]);
 
   /**
    * What a speaker does once its resume window has passed: end the session for good
@@ -142,7 +155,7 @@ export function useDevice() {
     (id: string) => {
       pendingText.current = null;
       stopCues();
-      setTalking(false);
+      setLive(false);
       session.resume(id);
       note("Continuing an earlier conversation");
     },
@@ -152,7 +165,7 @@ export function useDevice() {
   const newSession = useCallback(() => {
     pendingText.current = null;
     stopCues();
-    setTalking(false);
+    setLive(false);
     session.end();
     note("New session");
   }, [session, note, stopCues]);
@@ -163,24 +176,25 @@ export function useDevice() {
     else session.start();
   }, [session]);
 
-  // Muted until a hold: set before connect(), so a typed turn never opens the mic.
+  // Muted unless live: set before connect(), so a typed turn never opens the mic.
   useEffect(() => {
-    session.setMicMuted(!talking);
-  }, [session, talking]);
+    session.setMicMuted(!live);
+  }, [session, live]);
 
-  /** The button went down: cut off a notice, interrupt a reply, open the mic. */
-  const startTalking = useCallback(() => {
+  /**
+   * Off: cut off a notice, open the session (or join the one a typed turn opened) with
+   * the mic open. On: hang up, with whatever the agent was saying.
+   */
+  const toggleLive = useCallback(() => {
     stopCues();
+    if (live) {
+      session.cancel();
+      hangUp();
+      return;
+    }
     if (phase === "idle") connect();
-    else session.cancel();
-    setTalking(true);
-  }, [phase, session, connect, stopCues]);
-
-  /** The button came up: silence from here lets the agent end the turn. */
-  const stopTalking = useCallback(() => {
-    setTalking(false);
-    lastActivity.current = Date.now();
-  }, []);
+    setLive(true);
+  }, [live, phase, session, connect, hangUp, stopCues]);
 
   /** Typing is a turn. Idle, it opens the session first and goes once it is up. */
   const send = useCallback(
@@ -211,7 +225,7 @@ export function useDevice() {
     if (phase === "connecting" && now - phaseSince.current > CONNECT_TIMEOUT_MS) {
       setFailed(true);
       hangUp();
-    } else if (phase === "active" && !talking && session.state !== "speaking") {
+    } else if (phase === "active" && !live && session.state !== "speaking") {
       const limit = session.state === "thinking" ? THINKING_TIMEOUT_MS : FOLLOWUP_MS;
       if (now - lastActivity.current > limit) hangUp();
     }
@@ -226,7 +240,6 @@ export function useDevice() {
   // and hang up, and nothing it says after has anywhere to play.
   useEvent("stop", () => {
     stopCues();
-    setTalking(false);
     session.cancel();
     hangUp();
   });
@@ -242,7 +255,7 @@ export function useDevice() {
           ? "speaking"
           : session.state === "thinking"
             ? "thinking"
-            : talking
+            : live
               ? "listening"
               : "off";
 
@@ -254,9 +267,8 @@ export function useDevice() {
     streaming,
     transcript,
     error: session.error,
-    talking,
-    startTalking,
-    stopTalking,
+    live,
+    toggleLive,
     send,
     hangUp,
     newSession,
