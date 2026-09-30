@@ -1,3 +1,4 @@
+import { spokenDigits } from "@alexkroman1/aai";
 import { sendToChannel, textbeltChannel } from "@alexkroman1/aai/channels";
 import type { EnvContext } from "@alexkroman1/aai/step";
 import { normalizePhone as toE164 } from "@alexkroman1/aai/utils";
@@ -38,33 +39,10 @@ export function normalizeEmail(typed: string): string | undefined {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && email.length <= 254 ? email : undefined;
 }
 
-let cached: Profile = {};
-let cachedAt = 0;
-let refreshing: Promise<Profile> | undefined;
-const CACHE_MS = 30_000;
-
 /** The whole profile, fresh from the database. */
 export async function readProfile(ctx: EnvContext): Promise<Profile> {
   const rows = await rest<{ key: string; value: string }[]>(ctx, "/profile?select=key,value");
-  cached = Object.fromEntries(rows.map((r) => [r.key, r.value])) as Profile;
-  cachedAt = Date.now();
-  return cached;
-}
-
-/**
- * The profile as last read, for the system prompt, which is resolved synchronously on
- * every model step and so cannot wait on the database. A stale copy starts a refresh
- * for the next step. Tools never use this: they read fresh.
- */
-export function cachedProfile(ctx: EnvContext): Profile {
-  if (Date.now() - cachedAt > CACHE_MS && !refreshing) {
-    refreshing = readProfile({ env: ctx.env })
-      .catch(() => cached)
-      .finally(() => {
-        refreshing = undefined;
-      });
-  }
-  return cached;
+  return Object.fromEntries(rows.map((r) => [r.key, r.value])) as Profile;
 }
 
 /** Save fields, or delete the ones given as null. */
@@ -204,7 +182,7 @@ export async function confirmPhone(ctx: EnvContext, code: string): Promise<Confi
   );
   if (!pending) return { status: "none_pending" };
 
-  if ((await sha256(code.replace(/\D/g, ""))) !== pending.code_sha256) {
+  if ((await sha256(spokenDigits(code))) !== pending.code_sha256) {
     const attempts = pending.attempts + 1;
     await rest(ctx, `/phone_verification?id=eq.${pending.id}`, {
       method: "PATCH",

@@ -37,11 +37,6 @@ function googleSentence(body: unknown): string | undefined {
     : undefined;
 }
 
-/** Google's own message, first sentence only: the model reads it aloud. */
-export async function googleError(res: Response): Promise<string> {
-  return googleSentence(await res.json().catch(() => ({}))) ?? `HTTP ${res.status}`;
-}
-
 const googleKey = (env: Readonly<Partial<Record<string, string>>>) => ({
   "x-goog-api-key": requireEnv({ env }, "GOOGLE_PLACES_API_KEY"),
 });

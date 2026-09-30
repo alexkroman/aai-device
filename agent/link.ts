@@ -1,3 +1,4 @@
+import { spokenDigits } from "@alexkroman1/aai";
 import type { EnvContext } from "@alexkroman1/aai/step";
 import { sha256 } from "./profile.ts";
 import { rest } from "./supabase.ts";
@@ -61,7 +62,7 @@ export async function claimLinkCode(
       `&expires_at=gt.${new Date(now).toISOString()}&attempts=lt.${MAX_LINK_ATTEMPTS}`,
   );
   if (pending.length === 0) return { status: "none_pending" };
-  const hash = await sha256(said.replace(/\D/g, ""));
+  const hash = await sha256(spokenDigits(said));
   const match = pending.find((p) => p.code_sha256 === hash);
   if (!match) {
     // Every pending code pays for a wrong guess: the guesser does not know which one it hit.
