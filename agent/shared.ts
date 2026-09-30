@@ -1,4 +1,4 @@
-import { workflow } from "@alexkroman1/aai";
+import { isClockTime, spokenDate, spokenTime, workflow } from "@alexkroman1/aai";
 import { z } from "zod";
 import { appEventFlow } from "./workflows/app-event.ts";
 import { appJobFailure, appJobFlow } from "./workflows/app-job.ts";
@@ -83,31 +83,49 @@ export const memorize = workflow({
 export const MAX_REMINDER_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
- * When a reminder is due: `inSeconds` from now, or the next `at` ("17:30", 24-hour) in
- * this machine's time zone — the agent runs on a computer in the home, so its clock is
- * the speaker's. The model does not know the time, so it passes what they SAID and this
- * does the arithmetic. Undefined when neither (or an unreadable `at`) was given.
+ * When a reminder is due: `inSeconds` from now, or the next `at` ("17:30", 24-hour,
+ * zero-padded: the tool's `clockTime` field) in this machine's time zone — the agent runs
+ * on a computer in the home, so its clock is the speaker's. The model does not know the
+ * time, so it passes what they SAID and this does the arithmetic. Undefined when neither
+ * (or an `at` isClockTime refuses, like "9:30" or "24:00") was given.
  */
 export function reminderDueAt(
   now: Date,
   when: { inSeconds?: number | undefined; at?: string | undefined },
 ): number | undefined {
   if (when.inSeconds !== undefined) return now.getTime() + when.inSeconds * 1000;
-  const m = when.at?.match(/^([01]?\d|2[0-3]):([0-5]\d)$/);
-  if (!m) return undefined;
+  if (when.at === undefined || !isClockTime(when.at)) return undefined;
+  const [h, m] = when.at.split(":").map(Number);
   const due = new Date(now);
-  due.setHours(Number(m[1]), Number(m[2]), 0, 0);
+  due.setHours(h ?? 0, m ?? 0, 0, 0);
   if (due.getTime() <= now.getTime()) due.setDate(due.getDate() + 1);
   return due.getTime();
 }
 
-/** "5:30 PM", or "tomorrow at 7:00 AM" — what the agent says back. */
+const pad = (n: number) => String(n).padStart(2, "0");
+/** A Date's LOCAL wall clock as the SDK's spoken formatters take it: "HH:MM", "YYYY-MM-DD". */
+const localClock = (d: Date) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+const localDay = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+
+/**
+ * "5:30 PM", "tomorrow at 7 AM", "Wednesday at 7 AM" — what the agent says back. The SDK's
+ * spokenTime drops ":00" on the hour, which a TTS engine would read as "zero zero". The
+ * weekday alone names a day this week; a week out (the MAX_REMINDER_MS edge) is today's
+ * weekday again, so that one gets spokenDate's month and day too: "Monday, October 5 at 2 PM".
+ */
 export function spokenDue(now: Date, dueAt: number): string {
   const due = new Date(dueAt);
-  const time = due.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
-  if (due.toDateString() === now.toDateString()) return time;
+  const time = spokenTime(localClock(due));
+  const day = localDay(due);
+  if (day === localDay(now)) return time;
   const tomorrow = new Date(now);
   tomorrow.setDate(now.getDate() + 1);
-  if (due.toDateString() === tomorrow.toDateString()) return `tomorrow at ${time}`;
-  return `${due.toLocaleDateString("en-US", { weekday: "long" })} at ${time}`;
+  if (day === localDay(tomorrow)) return `tomorrow at ${time}`;
+  // spokenDate is "Monday, June 8": its weekday is everything before the comma.
+  const date = spokenDate(day);
+  const aWeekOut = new Date(now);
+  aWeekOut.setDate(now.getDate() + 7);
+  // YYYY-MM-DD compares as a string, and by DAY: next Monday at 9 is under seven days from
+  // Monday at 2 but is still a Monday.
+  return `${day < localDay(aWeekOut) ? date.split(",")[0] : date} at ${time}`;
 }

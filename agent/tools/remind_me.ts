@@ -1,4 +1,4 @@
-import { requireSessionClient, tool } from "@alexkroman1/aai";
+import { clockTime, requireSessionClient, tool } from "@alexkroman1/aai";
 import { isToolFailure } from "@alexkroman1/aai/utils";
 import { z } from "zod";
 import { MAX_REMINDER_MS, remind, reminderDueAt, spokenDue } from "../shared.ts";
@@ -26,10 +26,9 @@ export default tool({
       .min(1)
       .optional()
       .describe("How long from now, in seconds, when they said a duration"),
-    at: z
-      .string()
-      .optional()
-      .describe("A clock time in 24-hour HH:MM, when they said a time, e.g. '17:00' for five pm"),
+    // clockTime states the zero-padding in its description, the half a model gets wrong
+    // ("4:45" for quarter to five), and refuses an unpadded time before execute runs.
+    at: clockTime("the time of day they said (five pm is 17:00)").optional(),
   }),
   async execute({ text, in_seconds, at }, ctx) {
     const clientId = requireSessionClient(ctx, "This device can't receive reminders.");

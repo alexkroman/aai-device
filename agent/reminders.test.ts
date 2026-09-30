@@ -26,12 +26,13 @@ describe("reminderDueAt", () => {
 
   test("a clock time is today when it is still ahead, tomorrow when it has passed", () => {
     expect(reminderDueAt(NOW, { at: "17:00" })).toBe(new Date(2026, 8, 28, 17, 0).getTime());
-    expect(reminderDueAt(NOW, { at: "9:30" })).toBe(new Date(2026, 8, 29, 9, 30).getTime());
+    expect(reminderDueAt(NOW, { at: "09:30" })).toBe(new Date(2026, 8, 29, 9, 30).getTime());
     expect(reminderDueAt(NOW, { at: "14:00" })).toBe(new Date(2026, 8, 29, 14, 0).getTime());
   });
 
   test("nothing usable is undefined", () => {
-    for (const at of [undefined, "", "5pm", "24:00", "12:60"]) {
+    // "9:30" too: isClockTime wants it zero-padded, as the tool's clockTime field says.
+    for (const at of [undefined, "", "5pm", "9:30", "24:00", "12:60"]) {
       expect.soft(reminderDueAt(NOW, { at }), String(at)).toBeUndefined();
     }
   });
@@ -39,9 +40,22 @@ describe("reminderDueAt", () => {
 
 describe("spokenDue", () => {
   test("says today's time bare, and names tomorrow or the weekday", () => {
-    expect(spokenDue(NOW, new Date(2026, 8, 28, 17, 0).getTime())).toBe("5:00 PM");
-    expect(spokenDue(NOW, new Date(2026, 8, 29, 7, 0).getTime())).toBe("tomorrow at 7:00 AM");
-    expect(spokenDue(NOW, new Date(2026, 8, 30, 7, 0).getTime())).toBe("Wednesday at 7:00 AM");
+    expect(spokenDue(NOW, new Date(2026, 8, 28, 17, 0).getTime())).toBe("5 PM");
+    expect(spokenDue(NOW, new Date(2026, 8, 28, 17, 30).getTime())).toBe("5:30 PM");
+    expect(spokenDue(NOW, new Date(2026, 8, 29, 7, 0).getTime())).toBe("tomorrow at 7 AM");
+    expect(spokenDue(NOW, new Date(2026, 8, 30, 7, 5).getTime())).toBe("Wednesday at 7:05 AM");
+    expect(spokenDue(NOW, new Date(2026, 9, 4, 9, 0).getTime())).toBe("Sunday at 9 AM");
+  });
+
+  test("a week out is today's weekday again, so it says the date too", () => {
+    // NOW is a Monday: next Monday morning is under 7 days away but still a Monday.
+    expect(spokenDue(NOW, new Date(2026, 9, 5, 9, 0).getTime())).toBe("Monday, October 5 at 9 AM");
+    expect(spokenDue(NOW, new Date(2026, 9, 5, 14, 0).getTime())).toBe("Monday, October 5 at 2 PM");
+  });
+
+  test("midnight and noon", () => {
+    expect(spokenDue(NOW, new Date(2026, 8, 29, 0, 0).getTime())).toBe("tomorrow at 12 AM");
+    expect(spokenDue(NOW, new Date(2026, 8, 29, 12, 0).getTime())).toBe("tomorrow at 12 PM");
   });
 });
 
@@ -53,7 +67,7 @@ describe("remind_me", () => {
     const workflows = installStubWorkflows({ runId: "wrun_1" });
     const ctx = createToolContext({ clientId: "kitchen", workflows });
     const result = await runTool(remindMe, { text: "call the plumber", at: "17:00" }, ctx);
-    expect(result).toEqual({ scheduled: true, text: "call the plumber", due: "5:00 PM" });
+    expect(result).toEqual({ scheduled: true, text: "call the plumber", due: "5 PM" });
     expect(workflows.start).toHaveBeenCalledWith(
       remind,
       { clientId: "kitchen", text: "call the plumber", dueAt: new Date(2026, 8, 28, 17).getTime() },
