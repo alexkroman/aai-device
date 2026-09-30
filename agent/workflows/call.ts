@@ -1,13 +1,11 @@
 import type { WorkflowContext } from "@alexkroman1/aai";
 import {
-  DEFAULT_CLIENT_DELIVERY_ATTEMPTS,
   isCallOver,
   PlaceCallError,
   stepCallStatus,
   stepEnv,
   stepEnvContext,
   stepPlaceCall,
-  stepSayOnClient,
 } from "@alexkroman1/aai/step";
 import { throwStepError } from "@alexkroman1/aai/step-errors";
 import { CALL_TIME_LIMIT_S, callerUrl, RING_TIMEOUT_S, readCall, updateCall } from "../calls.ts";
@@ -19,7 +17,11 @@ import { CALL_TIME_LIMIT_S, callerUrl, RING_TIMEOUT_S, readCall, updateCall } fr
 //   dial      1 step    the SDK's stepPlaceCall: Twilio dials, the answered call streamed
 //                       to caller/'s /phone with the call id as a <Parameter>
 //   check     N steps   ctx.poll every POLL_MS: the row, and Twilio's own status of the call
-//   announce  1 step    the outcome (or why it didn't happen), spoken on the speaker
+//   callee    1 step    who was called, read from the row for the sentence below
+//   announce  1 step    ctx.sayOnClient: the outcome (or why it didn't happen), on the speaker
+//
+// `callee` is new beside the older steps: a step journals by name and occurrence, so a run
+// in flight across its arrival just takes it fresh and replays `announce` as before.
 
 export type CallInput = { callId: string; clientId: string };
 
@@ -42,9 +44,10 @@ export async function callFlow(input: CallInput, ctx: WorkflowContext) {
           })
         ).value
       : { over: false };
-  const { runId } = ctx;
-  const said = await ctx.step("announce", () => announce(runId, input, dialled, last), {
-    maxAttempts: DEFAULT_CLIENT_DELIVERY_ATTEMPTS,
+  const callee = await ctx.step("callee", () => readCallee(input.callId));
+  const said = await ctx.sayOnClient("announce", input.clientId, {
+    event: "call",
+    text: callReport(callee, dialled, last),
   });
   return { said, twilio: last.twilio ?? null };
 }
@@ -133,13 +136,7 @@ export function callReport(callee: string, dialled: Dialled, last: Checked): str
     : `I called ${callee}, but the call ended before I could get an answer.`;
 }
 
-async function announce(
-  id: string,
-  input: CallInput,
-  dialled: Dialled,
-  last: Checked,
-): Promise<string> {
-  const call = await readCall(stepEnvContext(), input.callId);
-  const said = callReport(call?.callee ?? "them", dialled, last);
-  return await stepSayOnClient(input.clientId, { id, event: "call", text: said });
+/** Who the call was to, as the row names them. */
+async function readCallee(callId: string): Promise<string> {
+  return (await readCall(stepEnvContext(), callId))?.callee ?? "them";
 }

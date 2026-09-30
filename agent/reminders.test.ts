@@ -14,7 +14,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { MAX_REMINDER_MS, remind, reminderDueAt, spokenDue } from "./shared.ts";
 import cancelReminders from "./tools/cancel_reminders.ts";
 import remindMe from "./tools/remind_me.ts";
-import { deliver, remindFlow } from "./workflows/remind.ts";
+import { remindFlow } from "./workflows/remind.ts";
 
 // 2026-09-28 14:00 local: the agent's clock is the home's.
 const NOW = new Date(2026, 8, 28, 14, 0, 0);
@@ -120,7 +120,8 @@ describe("the remind workflow", () => {
   test("deliver says the reminder on the speaker under the run id", async () => {
     const speech = installStubSpeech({ pcmBytes: 3200 });
     const inbox = installStubClientInbox();
-    await deliver("wrun_7", { clientId: "kitchen", text: "flip the laundry", dueAt: 0 });
+    const ctx = createWorkflowContext({ runId: "wrun_7" });
+    await remindFlow({ clientId: "kitchen", text: "flip the laundry", dueAt: 0 }, ctx);
     expect(speech.calls).toMatchObject([{ text: "Reminder: flip the laundry" }]);
     expect(inbox.calls).toHaveLength(1);
     const [{ clientId, notice }] = inbox.calls as [(typeof inbox.calls)[number]];
@@ -137,8 +138,9 @@ describe("the remind workflow", () => {
   test("a speaker that is busy fails the attempt as retryable, so the step redelivers", async () => {
     installStubSpeech();
     installStubClientInbox({ answer: "busy" });
+    const ctx = createWorkflowContext({ runId: "wrun_8" });
     await expect(
-      deliver("wrun_8", { clientId: "kitchen", text: "x", dueAt: 0 }),
+      remindFlow({ clientId: "kitchen", text: "x", dueAt: 0 }, ctx),
     ).rejects.toMatchObject({ name: "ClientUnreachableError", reason: "busy" });
   });
 });

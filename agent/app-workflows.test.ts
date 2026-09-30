@@ -1,5 +1,6 @@
 import { mcpToolName, tool } from "@alexkroman1/aai";
 import { stubStepMcp } from "@alexkroman1/aai/experimental";
+import { DEFAULT_CLIENT_DELIVERY_ATTEMPTS } from "@alexkroman1/aai/step";
 import { createToolContext, createWorkflowContext, runTool } from "@alexkroman1/aai/testing";
 import {
   installStubClientInbox,
@@ -13,8 +14,8 @@ import { z } from "zod";
 import { COMPOSIO_MCP_TOOLS } from "./apps.ts";
 import { appJob } from "./shared.ts";
 import appTask, { HANDOFF_LINE, TEXT_HANDOFF_LINE } from "./tools/app_task.ts";
-import { appEventFlow, tell } from "./workflows/app-event.ts";
-import { announce, work, worker } from "./workflows/app-job.ts";
+import { appEventFlow } from "./workflows/app-event.ts";
+import { appJobFailure, appJobFlow, spokenAnswer, work, worker } from "./workflows/app-job.ts";
 
 // The background halves of the household's apps: app_task's run and the watch events the
 // webhook starts. Composio and the model are not reached here (apps.test.ts and
@@ -113,10 +114,21 @@ describe("the appEvent workflow", () => {
     expect(ctx.steps.map((s) => s.name)).toEqual(["judge"]);
   });
 
-  test("tell says it on the speaker under the run id", async () => {
+  test("a wanted event is told on the speaker under the run id", async () => {
     installStubSpeech({ pcmBytes: 3200 });
     const inbox = installStubClientInbox();
-    await tell("wrun_9", input, "Sam just emailed about dinner.");
+    const ctx = createWorkflowContext({
+      runId: "wrun_9",
+      results: { judge: { tell: true, say: "Sam just emailed about dinner." } },
+    });
+    expect(await appEventFlow(input, ctx)).toEqual({
+      told: true,
+      said: "Sam just emailed about dinner.",
+    });
+    expect(ctx.steps).toEqual([
+      { name: "judge" },
+      { name: "tell", maxAttempts: DEFAULT_CLIENT_DELIVERY_ATTEMPTS },
+    ]);
     const [{ clientId, notice }] = inbox.calls as [(typeof inbox.calls)[number]];
     expect(clientId).toBe("kitchen");
     expect(notice).toMatchObject({
@@ -128,25 +140,54 @@ describe("the appEvent workflow", () => {
 });
 
 describe("the appJob announcement", () => {
-  async function said(
-    input: Parameters<typeof announce>[1],
-    texted?: Parameters<typeof announce>[3],
-  ) {
-    installStubSpeech();
-    const inbox = installStubClientInbox();
-    await announce("wrun_2", input, "Three new messages.", texted);
-    return (inbox.calls.at(-1)?.notice.data as { said?: string } | undefined)?.said;
-  }
-
-  test("an unasked run is only said, with no word of a text", async () => {
-    expect(await said({ task: "t", clientId: "kitchen" })).toBe("Three new messages.");
+  test("an unasked run is only said, with no word of a text", () => {
+    expect(spokenAnswer({ task: "t", clientId: "kitchen" }, "Three new messages.")).toBe(
+      "Three new messages.",
+    );
   });
 
-  test("an asked run says whether the text went", async () => {
+  test("an asked run says whether the text went", () => {
     const input = { task: "t", clientId: "kitchen", text: true };
-    expect(await said(input, { sent: true })).toBe(
+    expect(spokenAnswer(input, "Three new messages.", { sent: true })).toBe(
       "Three new messages. I've texted it to you too.",
     );
-    expect(await said(input, { sent: false })).toMatch(/couldn't text it to you/);
+    expect(spokenAnswer(input, "Three new messages.", { sent: false })).toMatch(
+      /couldn't text it to you/,
+    );
+  });
+
+  test("the run says the answer in one retried step under the run id", async () => {
+    installStubSpeech();
+    const inbox = installStubClientInbox();
+    const ctx = createWorkflowContext({
+      runId: "wrun_2",
+      results: { work: "answer", writeSpoken: "Three new messages." },
+    });
+    await appJobFlow({ task: "t", clientId: "kitchen" }, ctx);
+    expect(ctx.steps.at(-1)).toEqual({
+      name: "announce",
+      maxAttempts: DEFAULT_CLIENT_DELIVERY_ATTEMPTS,
+    });
+    expect(inbox.calls.at(-1)?.notice).toMatchObject({
+      id: "wrun_2",
+      event: "app",
+      data: { said: "Three new messages." },
+    });
+  });
+
+  test("a run that failed for good says why under its own id", async () => {
+    installStubSpeech();
+    const inbox = installStubClientInbox();
+    expect(appJobFailure.maxAttempts).toBe(DEFAULT_CLIENT_DELIVERY_ATTEMPTS);
+    await appJobFailure.run(new Error("Gmail is not connected."), {
+      runId: "wrun_3",
+      workflow: "appJob",
+      input: { task: "t", clientId: "kitchen" },
+    });
+    expect(inbox.calls.at(-1)?.notice).toMatchObject({
+      id: "wrun_3:failed",
+      event: "app",
+      data: { failed: true, said: "Sorry, I couldn't finish that: Gmail is not connected." },
+    });
   });
 });
