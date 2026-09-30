@@ -1,6 +1,7 @@
 import type { WorkflowContext } from "@alexkroman1/aai";
 import {
   DEFAULT_CLIENT_DELIVERY_ATTEMPTS,
+  isCallOver,
   PlaceCallError,
   stepCallStatus,
   stepEnv,
@@ -25,8 +26,6 @@ export type CallInput = { callId: string; clientId: string };
 const POLL_MS = 10_000;
 /** Ringing plus the call's hard limit plus slack: past this the call is given up on. */
 const MAX_WAIT_MS = (RING_TIMEOUT_S + CALL_TIME_LIMIT_S) * 1000 + 60_000;
-/** Twilio call statuses that mean it is over. */
-const OVER = new Set(["completed", "busy", "no-answer", "failed", "canceled"]);
 
 type Dialled = { sid: string } | { failed: string };
 type Checked = { over: boolean; twilio?: string; outcome?: string | null; status?: string };
@@ -102,7 +101,7 @@ async function checkCall(callId: string, sid: string): Promise<Checked> {
     readCall(db, callId),
     stepCallStatus({ carrier: "twilio", callId: sid }).catch((): string => "unknown"),
   ]);
-  const over = OVER.has(status) || call?.status === "ended" || call?.status === "failed";
+  const over = isCallOver(status) || call?.status === "ended" || call?.status === "failed";
   if (over && call && call.status !== "ended" && call.status !== "failed") {
     // Over on Twilio's side without the calling agent closing the row: it never
     // answered, or crashed. The row says so either way.
